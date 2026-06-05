@@ -13,7 +13,7 @@ jobs:
       id-token: write
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           fetch-depth: 1
 
@@ -25,6 +25,6 @@ jobs:
           plugins: 'code-review@claude-code-plugins'
           prompt: '/code-review:code-review ${{ github.repository }}/pull/${{ github.event.pull_request.number }}'
           claude_args: |
-            --append-system-prompt "Strictly enforce the project review guidelines in .github/REVIEW_GUIDELINES.md — read that file first. Verify the architecture invariants and required tests it lists. Follow its review philosophy: prioritize correctness, security and reliability; reject speculative generality, style-only nits and over-engineering with a brief note; report each finding with a severity and let the author decide what to apply."
+            --append-system-prompt "Strictly enforce the project review guidelines in .github/REVIEW_GUIDELINES.md — read that file first. Verify the architecture invariants and required tests it lists. Follow its review philosophy: prioritize correctness, security and reliability; reject speculative generality, style-only nits and over-engineering with a brief note; report each finding with a severity and let the author decide what to apply. ALWAYS post exactly one top-level (non-inline) summary comment on the PR with the outcome, even when there are no findings: if nothing was found, state clearly that no issues were found and the PR is OK to merge; if there are findings, summarize them with their severities."
             --model claude-opus-4-8
             --max-turns 25
