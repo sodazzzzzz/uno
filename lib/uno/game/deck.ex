@@ -115,9 +115,7 @@ defmodule Uno.Game.Deck do
   (без перетасовки сброса; перетасовку делает `draw/4`).
   """
   @spec take([card], non_neg_integer) :: {[card], [card]}
-  def take(pile, n) when is_integer(n) and n >= 0 do
-    {Enum.take(pile, n), Enum.drop(pile, n)}
-  end
+  def take(pile, n) when is_integer(n) and n >= 0, do: Enum.split(pile, n)
 
   @doc """
   Добор `n` карт с автоматической перетасовкой сброса при опустошении колоды.
