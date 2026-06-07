@@ -592,6 +592,71 @@ defmodule Uno.Game.RulesTest do
     end
   end
 
+  describe "auto_color/2 — цвет по большинству для таймаута" do
+    test "выбирает цвет большинства в руке" do
+      assert Rules.auto_color([num(:red, 1), num(:red, 2), num(:blue, 3)]) == :red
+    end
+
+    test "Wild и Wild Draw Four не учитываются" do
+      assert Rules.auto_color([num(:red, 1), wild(), wild4()]) == :red
+    end
+
+    test "при равенстве выбирает из лидеров (детерминированно через инъекцию)" do
+      hand = [num(:red, 1), num(:blue, 2)]
+      # Лидеры отсортированы: [:blue, :red].
+      assert Rules.auto_color(hand, &hd/1) == :blue
+      assert Rules.auto_color(hand, &List.last/1) == :red
+    end
+
+    test "нет цветных карт — случайный из всех четырёх цветов" do
+      chooser = fn candidates ->
+        assert Enum.sort(candidates) == [:blue, :green, :red, :yellow]
+        :green
+      end
+
+      assert Rules.auto_color([wild(), wild4()], chooser) == :green
+    end
+  end
+
+  describe "auto_choose_color/3 — резолв таймаута :choosing_color" do
+    test "выбирает большинство и применяет как обычный выбор (Wild → ход следующему)" do
+      state =
+        three_player_state(%{
+          phase: :choosing_color,
+          pending: {:choose_color, "p1"},
+          discard_pile: [wild(), num(:red, 5)],
+          hands: %{"p1" => [num(:red, 1), num(:red, 2), num(:blue, 3)], "p2" => [], "p3" => []}
+        })
+
+      {:ok, s} = Rules.auto_choose_color(state)
+
+      assert s.current_color == :red
+      assert s.phase == :playing
+      assert s.current_player == "p2"
+    end
+
+    test "Wild Draw Four: авто-цвет + следующий берёт 4 и пропускается" do
+      state =
+        three_player_state(%{
+          phase: :choosing_color,
+          pending: {:choose_color, "p1"},
+          discard_pile: [wild4(), num(:red, 5)],
+          hands: %{"p1" => [num(:green, 1), num(:green, 2)], "p2" => [], "p3" => []},
+          draw_pile: [num(:red, 1), num(:red, 2), num(:red, 3), num(:red, 4), num(:red, 5)]
+        })
+
+      {:ok, s} = Rules.auto_choose_color(state, &hd/1, @identity)
+
+      assert s.current_color == :green
+      assert length(s.hands["p2"]) == 4
+      assert s.current_player == "p3"
+    end
+
+    test "вне фазы :choosing_color — ошибка" do
+      assert Rules.auto_choose_color(three_player_state(%{})) == {:error, :not_choosing_color}
+    end
+  end
+
   # 3-игроковое состояние партии в фазе :playing; overrides переопределяют поля.
   defp three_player_state(overrides) do
     defaults = %{
