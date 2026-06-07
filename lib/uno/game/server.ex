@@ -134,6 +134,9 @@ defmodule Uno.Game.Server do
     case validate_join(game, player) do
       :ok ->
         new_game = State.add_player(game, player)
+
+        # Уведомляем комнату ожидания, чтобы новый игрок/бот появился у всех.
+        broadcast(new_game)
         {:reply, {:ok, new_game.players}, %{s | game: new_game}}
 
       {:error, _reason} = error ->

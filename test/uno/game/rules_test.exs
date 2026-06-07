@@ -217,6 +217,18 @@ defmodule Uno.Game.RulesTest do
       assert proj.phase == :lobby
     end
 
+    test "включает публичный ростер (id/имя/бот, в порядке посадки, без рук)" do
+      players = [player("p1", "Алиса"), player("bot1", "Лео", true)]
+      state = State.new("ROOM", players)
+
+      proj = Rules.project(state, "p1")
+
+      assert proj.players == [
+               %{id: "p1", name: "Алиса", is_bot: false},
+               %{id: "bot1", name: "Лео", is_bot: true}
+             ]
+    end
+
     test "для неизвестного игрока своя рука пуста, но соперники видны" do
       players = [player("p1"), player("p2")]
       state = %State{players: players, hands: %{"p1" => [%{color: :red, type: {:number, 0}}]}}

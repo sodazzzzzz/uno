@@ -68,6 +68,14 @@ defmodule Uno.Game.ServerTest do
   end
 
   describe "broadcast обновлений" do
+    test "вход игрока (add_player) шлёт broadcast — комната ожидания обновляется" do
+      code = lobby([player("p1")])
+      Phoenix.PubSub.subscribe(Uno.PubSub, Server.topic(code))
+
+      assert {:ok, _roster} = Server.add_player(code, player("p2"))
+      assert_receive {:game_update, ^code}
+    end
+
     test "успешные изменения шлют {:game_update, room_code} в топик партии" do
       code = lobby([player("p1"), player("p2")])
       Phoenix.PubSub.subscribe(Uno.PubSub, Server.topic(code))
