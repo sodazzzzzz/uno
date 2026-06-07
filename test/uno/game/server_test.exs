@@ -130,6 +130,23 @@ defmodule Uno.Game.ServerTest do
       assert after_state.turn_ref == before.turn_ref + 1
     end
 
+    test "таймаут ПОСЛЕ добора не роняет сервер — ход просто переходит" do
+      code = lobby([player("p1"), player("p2")])
+      :ok = Server.start_game(code)
+      {:ok, pid} = Manager.find(code)
+
+      # p1 добрал → pending {:drew, p1}, таймер перевзведён под актуальный ref.
+      :ok = Server.draw(code, "p1")
+      ref = Server.state(code).turn_ref
+
+      send(pid, {:turn_timeout, ref})
+      after_state = Server.state(code)
+
+      assert Process.alive?(pid)
+      assert after_state.current_player == "p2"
+      assert after_state.pending == nil
+    end
+
     test "живой таймаут реально срабатывает (send_after end-to-end)" do
       code = lobby([player("p1"), player("p2")], turn_ms: 40)
       Phoenix.PubSub.subscribe(Uno.PubSub, Server.topic(code))

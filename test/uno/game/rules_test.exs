@@ -672,6 +672,22 @@ defmodule Uno.Game.RulesTest do
       assert s.pending == nil
     end
 
+    test ":playing — если игрок уже добрал в этот ход, таймаут просто пасует (без второго добора)" do
+      state =
+        three_player_state(%{
+          current_player: "p1",
+          pending: {:drew, "p1"},
+          hands: %{"p1" => [num(:red, 7)], "p2" => [], "p3" => []}
+        })
+
+      {:ok, s} = Rules.apply_timeout(state, &hd/1, @identity)
+
+      assert s.current_player == "p2"
+      assert s.pending == nil
+      # Рука не растёт — второго добора за ход нет.
+      assert s.hands["p1"] == [num(:red, 7)]
+    end
+
     test ":choosing_color — цвет выбирается по большинству, ход переходит" do
       state =
         three_player_state(%{

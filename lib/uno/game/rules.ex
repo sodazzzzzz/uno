@@ -457,12 +457,18 @@ defmodule Uno.Game.Rules do
         _chooser,
         shuffler
       ) do
-    {:ok, drawn} = apply_draw(state, player_id, shuffler)
+    case apply_draw(state, player_id, shuffler) do
+      {:ok, drawn} ->
+        case pass(drawn, player_id) do
+          {:ok, passed} -> {:ok, passed}
+          # Колода была пуста: apply_draw уже передал ход, пасовать нечем.
+          {:error, _reason} -> {:ok, drawn}
+        end
 
-    case pass(drawn, player_id) do
-      {:ok, passed} -> {:ok, passed}
-      # Колода была пуста: apply_draw уже передал ход, пасовать нечем.
-      {:error, _reason} -> {:ok, drawn}
+      # Игрок уже добрал в этот ход и завис (`pending: {:drew, player_id}`):
+      # второго добора нет — просто передаём ход.
+      {:error, :already_drew} ->
+        pass(state, player_id)
     end
   end
 
