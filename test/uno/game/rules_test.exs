@@ -440,7 +440,7 @@ defmodule Uno.Game.RulesTest do
       assert s.current_player == "p1"
     end
 
-    test "тянуть нечего даже после перетасовки — ход переходит без добора" do
+    test "тянуть нечего даже после перетасовки — ход переходит без добора, метки нет" do
       state =
         three_player_state(%{
           hands: %{"p1" => [], "p2" => [], "p3" => []},
@@ -451,6 +451,61 @@ defmodule Uno.Game.RulesTest do
       {:ok, s} = Rules.apply_draw(state, "p1", @identity)
 
       assert s.hands["p1"] == []
+      assert s.current_player == "p2"
+      assert s.pending == nil
+    end
+
+    test "добор ставит метку {:drew}; второй добор за ход запрещён" do
+      state =
+        three_player_state(%{
+          hands: %{"p1" => [num(:red, 7)], "p2" => [], "p3" => []},
+          draw_pile: [num(:green, 1), num(:green, 2)]
+        })
+
+      {:ok, s} = Rules.apply_draw(state, "p1", @identity)
+      assert s.pending == {:drew, "p1"}
+      assert s.current_player == "p1"
+
+      assert Rules.apply_draw(s, "p1", @identity) == {:error, :already_drew}
+    end
+  end
+
+  describe "pass/2 — пас после добора" do
+    test "после добора пас передаёт ход и снимает метку" do
+      state =
+        three_player_state(%{
+          pending: {:drew, "p1"},
+          hands: %{"p1" => [num(:red, 7)], "p2" => [], "p3" => []}
+        })
+
+      {:ok, s} = Rules.pass(state, "p1")
+
+      assert s.current_player == "p2"
+      assert s.pending == nil
+    end
+
+    test "пас без добора нельзя" do
+      assert Rules.pass(three_player_state(%{}), "p1") == {:error, :nothing_to_pass}
+    end
+
+    test "нельзя пасовать в чужой ход" do
+      assert Rules.pass(three_player_state(%{}), "p2") == {:error, :not_your_turn}
+    end
+
+    test "нельзя пасовать вне фазы :playing" do
+      assert Rules.pass(three_player_state(%{phase: :finished}), "p1") == {:error, :not_playing}
+    end
+
+    test "после добора можно сыграть любую подходящую карту — розыгрыш снимает метку" do
+      state =
+        three_player_state(%{
+          pending: {:drew, "p1"},
+          hands: %{"p1" => [num(:red, 7), num(:blue, 1)], "p2" => [], "p3" => []}
+        })
+
+      {:ok, s} = Rules.apply_play(state, "p1", num(:red, 7))
+
+      assert s.pending == nil
       assert s.current_player == "p2"
     end
   end

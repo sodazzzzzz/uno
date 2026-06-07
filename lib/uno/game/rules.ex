@@ -14,13 +14,19 @@ defmodule Uno.Game.Rules do
   Покрывает старт-раздачу (`deal/2`), следующего игрока (`next_player/1`),
   проекцию (`project/2`), валидность хода (`playable?/3`), применение хода —
   розыгрыш карты с эффектами Skip/Reverse/Draw Two/Wild/Wild+4 (`apply_play/3`),
-  добор (`apply_draw/2`) и резолв выбора цвета после Wild/Wild+4
-  (`choose_color/3` — выход из `:choosing_color`, для Wild Draw Four добор 4 со
-  скипом). Эффекты Skip/Reverse (включая «Reverse при 2 = Skip») построены поверх
-  `next_player/1`.
+  добор (`apply_draw/2`), пас после добора (`pass/2`) и резолв выбора цвета после
+  Wild/Wild+4 (`choose_color/3` — выход из `:choosing_color`, для Wild Draw Four
+  добор 4 со скипом). Эффекты Skip/Reverse (включая «Reverse при 2 = Skip»)
+  построены поверх `next_player/1`.
 
-  Пока НЕ здесь (следующий кусок правил): явный пас после добора — сейчас
-  `apply_draw/2` оставляет ход за игроком — и авто-выбор цвета по большинству при
+  Модель хода: в свой ход игрок либо играет любую подходящую карту
+  (`apply_play/3`), либо добирает 1 карту (`apply_draw/2`). После добора ход
+  остаётся за ним: можно сыграть любую подходящую карту или спасовать (`pass/2`);
+  второй добор за ход запрещён. Метка «уже добирал» хранится в `pending` как
+  `{:drew, player_id}` — поэтому правило «пас только после добора» живёт в чистом
+  слое, а не в процессе.
+
+  Пока НЕ здесь (следующий кусок правил): авто-выбор цвета по большинству при
   таймауте `:choosing_color` (увязан с серверным таймером).
   """
 
@@ -167,12 +173,14 @@ defmodule Uno.Game.Rules do
     end
   end
 
-  @typedoc "Причина отказа применить ход или выбор цвета."
+  @typedoc "Причина отказа применить ход, добор, пас или выбор цвета."
   @type reason ::
           :not_playing
           | :not_your_turn
           | :card_not_in_hand
           | :illegal_card
+          | :already_drew
+          | :nothing_to_pass
           | :not_choosing_color
           | :not_your_choice
           | :invalid_color
@@ -251,9 +259,12 @@ defmodule Uno.Game.Rules do
 
   Тянет 1 карту (с перетасовкой сброса при пустой колоде — `Deck.draw/4`). По §5
   добор НЕ передаёт ход автоматически: добранную карту игрок волен сыграть сразу
-  (`apply_play/3`) или оставить и спасовать, поэтому ход остаётся за ним.
+  (`apply_play/3`) или оставить и спасовать (`pass/2`), поэтому ход остаётся за
+  ним, и партия помечается `pending: {:drew, player_id}`. **Второй добор за ход
+  запрещён** (§5 «берёт 1 карту») — при уже стоящей метке `{:error, :already_drew}`.
   Исключение: если тянуть нечего даже после перетасовки (колода и сброс
-  исчерпаны) — ход просто переходит дальше (§5 «колода закончилась»).
+  исчерпаны) — добора нет и ход просто переходит дальше (§5 «колода закончилась»),
+  метка не ставится.
 
   Проверяет фазу `:playing` и что сейчас ход игрока; иначе `{:error, reason}`.
   `shuffler` инъектируется для детерминизма (по умолчанию `Deck.shuffle/1`).
@@ -262,23 +273,53 @@ defmodule Uno.Game.Rules do
           {:ok, State.t()} | {:error, reason}
   def apply_draw(state, player_id, shuffler \\ &Deck.shuffle/1)
 
+  def apply_draw(
+        %State{phase: :playing, current_player: player_id, pending: {:drew, player_id}},
+        player_id,
+        _shuffler
+      ),
+      do: {:error, :already_drew}
+
   def apply_draw(%State{phase: :playing, current_player: player_id} = state, player_id, shuffler) do
     {drawn, draw_pile, discard_pile} = Deck.draw(state.draw_pile, state.discard_pile, 1, shuffler)
-    hand = Map.get(state.hands, player_id, []) ++ drawn
-    current = if drawn == [], do: next_player(state), else: player_id
+    base = %{state | draw_pile: draw_pile, discard_pile: discard_pile}
 
-    {:ok,
-     %{
-       state
-       | draw_pile: draw_pile,
-         discard_pile: discard_pile,
-         hands: Map.put(state.hands, player_id, hand),
-         current_player: current
-     }}
+    if drawn == [] do
+      # Колода исчерпана — добора нет, ход переходит дальше.
+      {:ok, %{base | current_player: next_player(state), pending: nil}}
+    else
+      # Карта добрана, ход остаётся за игроком; помечаем, что добор уже был.
+      hand = Map.get(state.hands, player_id, []) ++ drawn
+      {:ok, %{base | hands: Map.put(state.hands, player_id, hand), pending: {:drew, player_id}}}
+    end
   end
 
   def apply_draw(%State{phase: :playing}, _player_id, _shuffler), do: {:error, :not_your_turn}
   def apply_draw(%State{}, _player_id, _shuffler), do: {:error, :not_playing}
+
+  @doc """
+  Передаёт ход дальше — пас. Допустим только **после добора** в этот ход.
+
+  По §5 спасовать можно лишь после того, как взял карту: поэтому `pass/2` валиден
+  только когда сейчас ход игрока и стоит метка `pending: {:drew, player_id}` (её
+  ставит `apply_draw/2`). Тогда ход переходит следующему, метка снимается.
+
+  Иначе — `{:error, reason}`: `:nothing_to_pass` (свой ход, но добора ещё не
+  было), `:not_your_turn`, `:not_playing`.
+  """
+  @spec pass(State.t(), State.player_id()) :: {:ok, State.t()} | {:error, reason}
+  def pass(
+        %State{phase: :playing, current_player: player_id, pending: {:drew, player_id}} = state,
+        player_id
+      ) do
+    {:ok, %{state | current_player: next_player(state), pending: nil}}
+  end
+
+  def pass(%State{phase: :playing, current_player: player_id}, player_id),
+    do: {:error, :nothing_to_pass}
+
+  def pass(%State{phase: :playing}, _player_id), do: {:error, :not_your_turn}
+  def pass(%State{}, _player_id), do: {:error, :not_playing}
 
   @doc """
   Резолвит выбор цвета игроком `player_id` после сыгранной Wild / Wild Draw Four.
@@ -336,10 +377,13 @@ defmodule Uno.Game.Rules do
   defp do_apply_play(state, player_id, card, shuffler) do
     hand = Map.get(state.hands, player_id, []) -- [card]
 
+    # Розыгрыш карты завершает «окно добора»: метка {:drew, _} снимается
+    # (Wild/Wild+4 ниже перезапишут pending на {:choose_color, _}).
     base = %{
       state
       | hands: Map.put(state.hands, player_id, hand),
-        discard_pile: [card | state.discard_pile]
+        discard_pile: [card | state.discard_pile],
+        pending: nil
     }
 
     if hand == [] do

@@ -37,11 +37,14 @@ defmodule Uno.Game.State do
 
     * `nil` — ничего не ждём;
     * `{:choose_color, player_id}` — игрок должен выбрать цвет после Wild;
+    * `{:drew, player_id}` — игрок уже добрал карту в этот ход (значит, второй
+      добор запрещён, а спасовать теперь можно);
     * `{:draw_penalty, player_id, count}` — игрок должен взять `count` карт.
   """
   @type pending ::
           nil
           | {:choose_color, player_id}
+          | {:drew, player_id}
           | {:draw_penalty, player_id, pos_integer}
 
   @type t :: %__MODULE__{
