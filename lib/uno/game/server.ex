@@ -37,6 +37,8 @@ defmodule Uno.Game.Server do
 
   use GenServer, restart: :temporary
 
+  require Logger
+
   alias Uno.Game.{Bot, Deck, Rules, State}
 
   @max_players 4
@@ -174,8 +176,14 @@ defmodule Uno.Game.Server do
         {:noreply, commit(s, new_game)}
 
       # Бот выдал нелегальный ход (не должно случаться) — не двигаемся и не
-      # падаем; на этот ход всё равно взведён таймер, он подстрахует.
-      {:error, _reason} ->
+      # падаем; на этот ход всё равно взведён таймер, он подстрахует. Логируем,
+      # чтобы реальный баг бота не превратился в тихую паузу до таймаута.
+      {:error, reason} ->
+        Logger.warning(
+          "Bot #{inspect(bot_id)} в партии #{game.room_code} вернул нелегальный ход " <>
+            "(#{inspect(reason)}); ждём таймер хода"
+        )
+
         {:noreply, s}
     end
   end
