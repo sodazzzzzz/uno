@@ -6,6 +6,14 @@ defmodule Uno.Game.RulesTest do
   defp player(id, name \\ nil, is_bot \\ false),
     do: %{id: id, name: name || id, is_bot: is_bot}
 
+  defp num(color, n), do: %{color: color, type: {:number, n}}
+  defp action(color, type), do: %{color: color, type: type}
+  defp wild, do: %{color: nil, type: :wild}
+  defp wild4, do: %{color: nil, type: :wild_draw_four}
+
+  # Identity-шафлер: фиксирует порядок перетасовки сброса для детерминизма.
+  @identity &Function.identity/1
+
   describe "deal/2 — старт партии" do
     test "раздаёт по 7 карт каждому, верх сброса — числовая карта, ходит первый игрок" do
       players = [player("p1"), player("p2"), player("p3")]
@@ -222,5 +230,244 @@ defmodule Uno.Game.RulesTest do
                %{id: "p2", name: "p2", card_count: 0}
              ]
     end
+  end
+
+  describe "playable?/3 — что можно сыграть" do
+    test "по цвету: совпадает с активным цветом" do
+      assert Rules.playable?(num(:red, 7), num(:red, 5), :red)
+    end
+
+    test "по числу: то же число другого цвета" do
+      assert Rules.playable?(num(:blue, 5), num(:red, 5), :red)
+    end
+
+    test "по типу акшна: тот же акшн другого цвета" do
+      assert Rules.playable?(action(:blue, :skip), action(:red, :skip), :red)
+    end
+
+    test "Wild и Wild Draw Four играются всегда" do
+      assert Rules.playable?(wild(), num(:red, 5), :red)
+      assert Rules.playable?(wild4(), action(:green, :reverse), :green)
+    end
+
+    test "не совпало ни по цвету, ни по числу/акшну — нельзя" do
+      refute Rules.playable?(num(:blue, 7), num(:red, 5), :red)
+      refute Rules.playable?(action(:blue, :skip), num(:red, 5), :red)
+    end
+
+    test "цвет сравнивается с current_color, а не с цветом верхней карты (после Wild)" do
+      top = wild()
+      assert Rules.playable?(num(:green, 3), top, :green)
+      refute Rules.playable?(num(:red, 3), top, :green)
+    end
+  end
+
+  describe "apply_play/3 — применение хода" do
+    test "нельзя сыграть не в свой ход" do
+      state =
+        three_player_state(%{
+          hands: %{"p1" => [num(:red, 7)], "p2" => [num(:red, 8)], "p3" => []}
+        })
+
+      assert Rules.apply_play(state, "p2", num(:red, 8)) == {:error, :not_your_turn}
+    end
+
+    test "нельзя играть вне фазы :playing" do
+      state = three_player_state(%{phase: :lobby})
+      assert Rules.apply_play(state, "p1", num(:red, 7)) == {:error, :not_playing}
+    end
+
+    test "нельзя сыграть карту не из руки" do
+      state = three_player_state(%{hands: %{"p1" => [num(:red, 7)], "p2" => [], "p3" => []}})
+      assert Rules.apply_play(state, "p1", num(:red, 8)) == {:error, :card_not_in_hand}
+    end
+
+    test "нельзя сыграть неподходящую карту" do
+      state = three_player_state(%{hands: %{"p1" => [num(:blue, 7)], "p2" => [], "p3" => []}})
+      assert Rules.apply_play(state, "p1", num(:blue, 7)) == {:error, :illegal_card}
+    end
+
+    test "число: карта в сброс, рука уменьшается, ход к следующему" do
+      state =
+        three_player_state(%{
+          hands: %{"p1" => [num(:red, 7), num(:blue, 1)], "p2" => [], "p3" => []}
+        })
+
+      {:ok, s} = Rules.apply_play(state, "p1", num(:red, 7))
+
+      assert s.discard_pile == [num(:red, 7), num(:red, 5)]
+      assert s.hands["p1"] == [num(:blue, 1)]
+      assert s.current_color == :red
+      assert s.current_player == "p2"
+      assert s.phase == :playing
+    end
+
+    test "Skip: следующий игрок пропускается" do
+      state =
+        three_player_state(%{
+          hands: %{"p1" => [action(:red, :skip), num(:blue, 1)], "p2" => [], "p3" => []}
+        })
+
+      {:ok, s} = Rules.apply_play(state, "p1", action(:red, :skip))
+      assert s.current_player == "p3"
+    end
+
+    test "Reverse при 3 игроках меняет направление" do
+      state =
+        three_player_state(%{
+          hands: %{"p1" => [action(:red, :reverse), num(:blue, 1)], "p2" => [], "p3" => []}
+        })
+
+      {:ok, s} = Rules.apply_play(state, "p1", action(:red, :reverse))
+      assert s.direction == :ccw
+      assert s.current_player == "p3"
+    end
+
+    test "Reverse при 2 игроках действует как Skip — ход возвращается к сыгравшему" do
+      state =
+        struct!(State, %{
+          phase: :playing,
+          players: [player("p1"), player("p2")],
+          hands: %{"p1" => [action(:red, :reverse), num(:blue, 1)], "p2" => []},
+          discard_pile: [num(:red, 5)],
+          current_player: "p1",
+          direction: :cw,
+          current_color: :red
+        })
+
+      {:ok, s} = Rules.apply_play(state, "p1", action(:red, :reverse))
+      assert s.current_player == "p1"
+      assert s.direction == :ccw
+    end
+
+    test "Draw Two: следующий берёт 2 карты и пропускается" do
+      state =
+        three_player_state(%{
+          hands: %{"p1" => [action(:red, :draw_two), num(:blue, 1)], "p2" => [], "p3" => []},
+          draw_pile: [num(:green, 1), num(:green, 2), num(:green, 3)]
+        })
+
+      {:ok, s} = Rules.apply_play(state, "p1", action(:red, :draw_two), @identity)
+
+      assert s.hands["p2"] == [num(:green, 1), num(:green, 2)]
+      assert s.draw_pile == [num(:green, 3)]
+      assert s.current_player == "p3"
+    end
+
+    test "Wild: переход в :choosing_color, ход не передаётся, цвет пока прежний" do
+      state =
+        three_player_state(%{hands: %{"p1" => [wild(), num(:blue, 1)], "p2" => [], "p3" => []}})
+
+      {:ok, s} = Rules.apply_play(state, "p1", wild())
+
+      assert s.phase == :choosing_color
+      assert s.pending == {:choose_color, "p1"}
+      assert s.current_player == "p1"
+      assert s.current_color == :red
+      assert s.discard_pile == [wild(), num(:red, 5)]
+    end
+
+    test "Wild Draw Four: тоже переход в :choosing_color (добор 4 — позже)" do
+      state =
+        three_player_state(%{hands: %{"p1" => [wild4(), num(:blue, 1)], "p2" => [], "p3" => []}})
+
+      {:ok, s} = Rules.apply_play(state, "p1", wild4())
+
+      assert s.phase == :choosing_color
+      assert s.pending == {:choose_color, "p1"}
+      assert s.current_player == "p1"
+    end
+
+    test "победа: пустая рука после хода → winner и :finished" do
+      state = three_player_state(%{hands: %{"p1" => [num(:red, 7)], "p2" => [], "p3" => []}})
+
+      {:ok, s} = Rules.apply_play(state, "p1", num(:red, 7))
+
+      assert s.phase == :finished
+      assert s.winner == "p1"
+      assert s.hands["p1"] == []
+    end
+
+    test "победа имеет приоритет: Wild последней картой → :finished, а не :choosing_color" do
+      state = three_player_state(%{hands: %{"p1" => [wild()], "p2" => [], "p3" => []}})
+
+      {:ok, s} = Rules.apply_play(state, "p1", wild())
+
+      assert s.phase == :finished
+      assert s.winner == "p1"
+      assert s.pending == nil
+    end
+  end
+
+  describe "apply_draw/2 — добор карты" do
+    test "нельзя добирать не в свой ход" do
+      state = three_player_state(%{draw_pile: [num(:green, 1)]})
+      assert Rules.apply_draw(state, "p2") == {:error, :not_your_turn}
+    end
+
+    test "нельзя добирать вне фазы :playing" do
+      state = three_player_state(%{phase: :finished, draw_pile: [num(:green, 1)]})
+      assert Rules.apply_draw(state, "p1") == {:error, :not_playing}
+    end
+
+    test "добор 1 карты: рука растёт, ход остаётся за игроком" do
+      state =
+        three_player_state(%{
+          hands: %{"p1" => [num(:red, 7)], "p2" => [], "p3" => []},
+          draw_pile: [num(:green, 1), num(:green, 2)]
+        })
+
+      {:ok, s} = Rules.apply_draw(state, "p1", @identity)
+
+      assert s.hands["p1"] == [num(:red, 7), num(:green, 1)]
+      assert s.draw_pile == [num(:green, 2)]
+      assert s.current_player == "p1"
+    end
+
+    test "добор при пустой колоде перетасовывает сброс (кроме верха)" do
+      state =
+        three_player_state(%{
+          hands: %{"p1" => [], "p2" => [], "p3" => []},
+          draw_pile: [],
+          discard_pile: [num(:red, 5), num(:blue, 2), num(:green, 3)]
+        })
+
+      {:ok, s} = Rules.apply_draw(state, "p1", @identity)
+
+      assert s.hands["p1"] == [num(:blue, 2)]
+      assert s.discard_pile == [num(:red, 5)]
+      assert s.draw_pile == [num(:green, 3)]
+      assert s.current_player == "p1"
+    end
+
+    test "тянуть нечего даже после перетасовки — ход переходит без добора" do
+      state =
+        three_player_state(%{
+          hands: %{"p1" => [], "p2" => [], "p3" => []},
+          draw_pile: [],
+          discard_pile: [num(:red, 5)]
+        })
+
+      {:ok, s} = Rules.apply_draw(state, "p1", @identity)
+
+      assert s.hands["p1"] == []
+      assert s.current_player == "p2"
+    end
+  end
+
+  # 3-игроковое состояние партии в фазе :playing; overrides переопределяют поля.
+  defp three_player_state(overrides) do
+    defaults = %{
+      phase: :playing,
+      players: [player("p1"), player("p2"), player("p3")],
+      hands: %{"p1" => [], "p2" => [], "p3" => []},
+      draw_pile: [],
+      discard_pile: [num(:red, 5)],
+      current_player: "p1",
+      direction: :cw,
+      current_color: :red
+    }
+
+    struct!(State, Map.merge(defaults, Map.new(overrides)))
   end
 end

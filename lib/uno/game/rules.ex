@@ -11,12 +11,16 @@ defmodule Uno.Game.Rules do
   данные (`Uno.Game.State` + параметры), на выходе данные. Поэтому модуль
   тестируется без поднятия процессов.
 
-  Это **первая часть** правил (старт-раздача, `next_player/1`, `project/2`).
-  Валидность хода (`playable?/3`), применение хода с эффектами карт
-  (`apply_play/3`, переход в `:choosing_color`) и добор (`apply_draw/2`) —
-  отдельный модульный кусок (PR-B). Эффекты Skip/Reverse, включая частный
-  случай «Reverse при 2 игроках = Skip», строятся поверх `next_player/1` там,
-  а не здесь.
+  Покрывает старт-раздачу (`deal/2`), следующего игрока (`next_player/1`),
+  проекцию (`project/2`), валидность хода (`playable?/3`) и применение хода —
+  розыгрыш карты с эффектами Skip/Reverse/Draw Two/Wild/Wild+4 (`apply_play/3`)
+  и добор (`apply_draw/2`). Эффекты Skip/Reverse (включая «Reverse при 2 = Skip»)
+  построены поверх `next_player/1`.
+
+  Пока НЕ здесь (следующий кусок правил): резолв выбора цвета после Wild/Wild
+  Draw Four — выход из `:choosing_color`, добор 4 карт для Wild Draw Four — и
+  явный пас после добора. Поэтому `apply_play/3` для Wild/Wild+4 лишь переводит
+  партию в `:choosing_color`, не передавая ход.
   """
 
   alias Uno.Game.{Deck, State}
@@ -160,4 +164,177 @@ defmodule Uno.Game.Rules do
       %{id: id, name: name, card_count: length(Map.get(hands, id, []))}
     end
   end
+
+  @typedoc "Причина отказа применить ход."
+  @type reason :: :not_playing | :not_your_turn | :card_not_in_hand | :illegal_card
+
+  @doc """
+  Можно ли сыграть карту `card` поверх верхней карты сброса `top` при активном
+  цвете `current_color` (§5).
+
+  Совпадение — по **цвету** (`card.color == current_color`), по **числу** или
+  **типу акшна** (равенство `:type` с `top`), либо карта — **Wild / Wild Draw
+  Four** (играются всегда). Цвет сравнивается с `current_color`, а НЕ с цветом
+  верхней карты: после Wild верх сброса чёрный (`color: nil`), а активный цвет
+  хранится отдельно.
+  """
+  @spec playable?(Deck.card(), Deck.card(), Deck.color() | nil) :: boolean
+  def playable?(%{type: :wild}, _top, _current_color), do: true
+  def playable?(%{type: :wild_draw_four}, _top, _current_color), do: true
+
+  def playable?(%{color: color}, _top, current_color)
+      when not is_nil(color) and color == current_color,
+      do: true
+
+  def playable?(%{type: type}, %{type: type}, _current_color), do: true
+  def playable?(_card, _top, _current_color), do: false
+
+  @doc """
+  Применяет ход «сыграть карту `card`» игроком `player_id`.
+
+  Проверяет по порядку: партия в фазе `:playing`, сейчас ход этого игрока, карта
+  есть в руке, карта играбельна (`playable?/3` относительно верха сброса и
+  `current_color`). При нарушении — `{:error, reason}`, состояние не меняется.
+
+  При успехе карта уходит из руки в сброс, обновляется `current_color` и
+  применяется эффект (§5):
+
+    * число — ход переходит дальше;
+    * **Skip** — следующий игрок пропускается;
+    * **Reverse** — меняет направление; **при 2 игроках действует как Skip**
+      (сыгравший ходит снова);
+    * **Draw Two** — следующий берёт 2 карты и пропускается;
+    * **Wild / Wild Draw Four** — партия переходит в `:choosing_color` с
+      `pending: {:choose_color, player_id}`; ход НЕ передаётся, цвет пока не
+      меняется. Выбор цвета и (для Wild+4) добор 4 карт со скипом — следующий
+      кусок правил.
+
+  **Победа имеет приоритет** (§5: сыгравший последнюю карту побеждает): если
+  после хода рука опустела — сразу `winner` и `phase: :finished`, без эффектов и
+  без перехода в `:choosing_color` (даже если последней была Wild/Wild+4).
+
+  `shuffler` инъектируется для детерминизма (нужен, если Draw Two вынуждает
+  перетасовать сброс при пустой колоде); по умолчанию — `Deck.shuffle/1`.
+  """
+  @spec apply_play(State.t(), State.player_id(), Deck.card(), Deck.shuffler()) ::
+          {:ok, State.t()} | {:error, reason}
+  def apply_play(state, player_id, card, shuffler \\ &Deck.shuffle/1)
+
+  def apply_play(
+        %State{phase: :playing, current_player: player_id} = state,
+        player_id,
+        card,
+        shuffler
+      ) do
+    with :ok <- check_in_hand(state, player_id, card),
+         :ok <- check_playable(state, card) do
+      {:ok, do_apply_play(state, player_id, card, shuffler)}
+    end
+  end
+
+  def apply_play(%State{phase: :playing}, _player_id, _card, _shuffler),
+    do: {:error, :not_your_turn}
+
+  def apply_play(%State{}, _player_id, _card, _shuffler), do: {:error, :not_playing}
+
+  @doc """
+  Применяет ход «взять карту» игроком `player_id` в его ход.
+
+  Тянет 1 карту (с перетасовкой сброса при пустой колоде — `Deck.draw/4`). По §5
+  добор НЕ передаёт ход автоматически: добранную карту игрок волен сыграть сразу
+  (`apply_play/3`) или оставить и спасовать, поэтому ход остаётся за ним.
+  Исключение: если тянуть нечего даже после перетасовки (колода и сброс
+  исчерпаны) — ход просто переходит дальше (§5 «колода закончилась»).
+
+  Проверяет фазу `:playing` и что сейчас ход игрока; иначе `{:error, reason}`.
+  `shuffler` инъектируется для детерминизма (по умолчанию `Deck.shuffle/1`).
+  """
+  @spec apply_draw(State.t(), State.player_id(), Deck.shuffler()) ::
+          {:ok, State.t()} | {:error, reason}
+  def apply_draw(state, player_id, shuffler \\ &Deck.shuffle/1)
+
+  def apply_draw(%State{phase: :playing, current_player: player_id} = state, player_id, shuffler) do
+    {drawn, draw_pile, discard_pile} = Deck.draw(state.draw_pile, state.discard_pile, 1, shuffler)
+    hand = Map.get(state.hands, player_id, []) ++ drawn
+    current = if drawn == [], do: next_player(state), else: player_id
+
+    {:ok,
+     %{
+       state
+       | draw_pile: draw_pile,
+         discard_pile: discard_pile,
+         hands: Map.put(state.hands, player_id, hand),
+         current_player: current
+     }}
+  end
+
+  def apply_draw(%State{phase: :playing}, _player_id, _shuffler), do: {:error, :not_your_turn}
+  def apply_draw(%State{}, _player_id, _shuffler), do: {:error, :not_playing}
+
+  defp check_in_hand(%State{hands: hands}, player_id, card) do
+    if card in Map.get(hands, player_id, []), do: :ok, else: {:error, :card_not_in_hand}
+  end
+
+  defp check_playable(%State{discard_pile: [top | _], current_color: color}, card) do
+    if playable?(card, top, color), do: :ok, else: {:error, :illegal_card}
+  end
+
+  defp do_apply_play(state, player_id, card, shuffler) do
+    hand = Map.get(state.hands, player_id, []) -- [card]
+
+    base = %{
+      state
+      | hands: Map.put(state.hands, player_id, hand),
+        discard_pile: [card | state.discard_pile]
+    }
+
+    if hand == [] do
+      %{base | phase: :finished, winner: player_id, pending: nil}
+    else
+      apply_effect(base, card, shuffler)
+    end
+  end
+
+  defp apply_effect(state, %{type: {:number, _}, color: color}, _shuffler) do
+    %{state | current_color: color, current_player: next_player(state)}
+  end
+
+  defp apply_effect(state, %{type: :skip, color: color}, _shuffler) do
+    %{state | current_color: color, current_player: skip_next(state)}
+  end
+
+  defp apply_effect(state, %{type: :reverse, color: color}, _shuffler) do
+    reversed = %{state | direction: flip(state.direction)}
+
+    # При 2 игроках Reverse = Skip: ход возвращается к сыгравшему.
+    current = if two_players?(state), do: state.current_player, else: next_player(reversed)
+    %{reversed | current_color: color, current_player: current}
+  end
+
+  defp apply_effect(state, %{type: :draw_two, color: color}, shuffler) do
+    victim = next_player(state)
+    {drawn, draw_pile, discard_pile} = Deck.draw(state.draw_pile, state.discard_pile, 2, shuffler)
+    victim_hand = Map.get(state.hands, victim, []) ++ drawn
+
+    %{
+      state
+      | current_color: color,
+        draw_pile: draw_pile,
+        discard_pile: discard_pile,
+        hands: Map.put(state.hands, victim, victim_hand),
+        current_player: skip_next(state)
+    }
+  end
+
+  defp apply_effect(state, %{type: type}, _shuffler) when type in [:wild, :wild_draw_four] do
+    %{state | phase: :choosing_color, pending: {:choose_color, state.current_player}}
+  end
+
+  # На один шаг дальше следующего — пропуск одного игрока (Skip / скип после Draw Two).
+  defp skip_next(state), do: next_player(%{state | current_player: next_player(state)})
+
+  defp flip(:cw), do: :ccw
+  defp flip(:ccw), do: :cw
+
+  defp two_players?(%State{players: players}), do: length(players) == 2
 end
