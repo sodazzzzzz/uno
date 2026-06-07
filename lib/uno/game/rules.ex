@@ -12,20 +12,22 @@ defmodule Uno.Game.Rules do
   тестируется без поднятия процессов.
 
   Покрывает старт-раздачу (`deal/2`), следующего игрока (`next_player/1`),
-  проекцию (`project/2`), валидность хода (`playable?/3`) и применение хода —
-  розыгрыш карты с эффектами Skip/Reverse/Draw Two/Wild/Wild+4 (`apply_play/3`)
-  и добор (`apply_draw/2`). Эффекты Skip/Reverse (включая «Reverse при 2 = Skip»)
-  построены поверх `next_player/1`.
+  проекцию (`project/2`), валидность хода (`playable?/3`), применение хода —
+  розыгрыш карты с эффектами Skip/Reverse/Draw Two/Wild/Wild+4 (`apply_play/3`),
+  добор (`apply_draw/2`) и резолв выбора цвета после Wild/Wild+4
+  (`choose_color/3` — выход из `:choosing_color`, для Wild Draw Four добор 4 со
+  скипом). Эффекты Skip/Reverse (включая «Reverse при 2 = Skip») построены поверх
+  `next_player/1`.
 
-  Пока НЕ здесь (следующий кусок правил): резолв выбора цвета после Wild/Wild
-  Draw Four — выход из `:choosing_color`, добор 4 карт для Wild Draw Four — и
-  явный пас после добора. Поэтому `apply_play/3` для Wild/Wild+4 лишь переводит
-  партию в `:choosing_color`, не передавая ход.
+  Пока НЕ здесь (следующий кусок правил): явный пас после добора — сейчас
+  `apply_draw/2` оставляет ход за игроком — и авто-выбор цвета по большинству при
+  таймауте `:choosing_color` (увязан с серверным таймером).
   """
 
   alias Uno.Game.{Deck, State}
 
   @hand_size 7
+  @colors [:red, :yellow, :green, :blue]
 
   @typedoc """
   Проекция состояния партии для одного игрока — ровно то, что уходит в LiveView.
@@ -165,8 +167,15 @@ defmodule Uno.Game.Rules do
     end
   end
 
-  @typedoc "Причина отказа применить ход."
-  @type reason :: :not_playing | :not_your_turn | :card_not_in_hand | :illegal_card
+  @typedoc "Причина отказа применить ход или выбор цвета."
+  @type reason ::
+          :not_playing
+          | :not_your_turn
+          | :card_not_in_hand
+          | :illegal_card
+          | :not_choosing_color
+          | :not_your_choice
+          | :invalid_color
 
   @doc """
   Можно ли сыграть карту `card` поверх верхней карты сброса `top` при активном
@@ -271,6 +280,51 @@ defmodule Uno.Game.Rules do
   def apply_draw(%State{phase: :playing}, _player_id, _shuffler), do: {:error, :not_your_turn}
   def apply_draw(%State{}, _player_id, _shuffler), do: {:error, :not_playing}
 
+  @doc """
+  Резолвит выбор цвета игроком `player_id` после сыгранной Wild / Wild Draw Four.
+
+  Допустимо только в фазе `:choosing_color`, когда ждём выбор именно этого игрока
+  (`pending == {:choose_color, player_id}`), а `color` — один из
+  `:red | :yellow | :green | :blue`. Иначе `{:error, reason}`
+  (`:not_choosing_color | :not_your_choice | :invalid_color`).
+
+  Устанавливает `current_color`, возвращает партию в `:playing` (`pending: nil`)
+  и применяет отложенный эффект чёрной карты (по верху сброса):
+
+    * **Wild** — ход переходит следующему игроку;
+    * **Wild Draw Four** — следующий берёт 4 карты и пропускается.
+
+  `shuffler` инъектируется для детерминизма (нужен для добора 4 при пустой
+  колоде); по умолчанию `Deck.shuffle/1`.
+  """
+  @spec choose_color(State.t(), State.player_id(), Deck.color(), Deck.shuffler()) ::
+          {:ok, State.t()} | {:error, reason}
+  def choose_color(state, player_id, color, shuffler \\ &Deck.shuffle/1)
+
+  def choose_color(
+        %State{phase: :choosing_color, pending: {:choose_color, player_id}} = state,
+        player_id,
+        color,
+        shuffler
+      )
+      when color in @colors do
+    resolved = %{state | current_color: color, phase: :playing, pending: nil}
+    {:ok, resolve_wild(resolved, shuffler)}
+  end
+
+  def choose_color(
+        %State{phase: :choosing_color, pending: {:choose_color, player_id}},
+        player_id,
+        _color,
+        _shuffler
+      ),
+      do: {:error, :invalid_color}
+
+  def choose_color(%State{phase: :choosing_color}, _player_id, _color, _shuffler),
+    do: {:error, :not_your_choice}
+
+  def choose_color(%State{}, _player_id, _color, _shuffler), do: {:error, :not_choosing_color}
+
   defp check_in_hand(%State{hands: hands}, player_id, card) do
     if card in Map.get(hands, player_id, []), do: :ok, else: {:error, :card_not_in_hand}
   end
@@ -328,6 +382,25 @@ defmodule Uno.Game.Rules do
 
   defp apply_effect(state, %{type: type}, _shuffler) when type in [:wild, :wild_draw_four] do
     %{state | phase: :choosing_color, pending: {:choose_color, state.current_player}}
+  end
+
+  # Отложенный эффект чёрной карты после выбора цвета (верх сброса — сама Wild).
+  defp resolve_wild(%State{discard_pile: [%{type: :wild_draw_four} | _]} = state, shuffler) do
+    victim = next_player(state)
+    {drawn, draw_pile, discard_pile} = Deck.draw(state.draw_pile, state.discard_pile, 4, shuffler)
+    victim_hand = Map.get(state.hands, victim, []) ++ drawn
+
+    %{
+      state
+      | draw_pile: draw_pile,
+        discard_pile: discard_pile,
+        hands: Map.put(state.hands, victim, victim_hand),
+        current_player: skip_next(state)
+    }
+  end
+
+  defp resolve_wild(%State{discard_pile: [%{type: :wild} | _]} = state, _shuffler) do
+    %{state | current_player: next_player(state)}
   end
 
   # На один шаг дальше следующего — пропуск одного игрока (Skip / скип после Draw Two).

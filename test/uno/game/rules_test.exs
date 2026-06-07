@@ -455,6 +455,88 @@ defmodule Uno.Game.RulesTest do
     end
   end
 
+  describe "choose_color/3 — выбор цвета после Wild/Wild+4" do
+    test "Wild меняет current_color и передаёт ход следующему" do
+      state =
+        three_player_state(%{
+          phase: :choosing_color,
+          pending: {:choose_color, "p1"},
+          discard_pile: [wild(), num(:red, 5)]
+        })
+
+      {:ok, s} = Rules.choose_color(state, "p1", :blue)
+
+      assert s.current_color == :blue
+      assert s.phase == :playing
+      assert s.pending == nil
+      assert s.current_player == "p2"
+    end
+
+    test "полный флоу: apply_play(Wild) → choose_color" do
+      state =
+        three_player_state(%{hands: %{"p1" => [wild(), num(:blue, 1)], "p2" => [], "p3" => []}})
+
+      {:ok, mid} = Rules.apply_play(state, "p1", wild())
+      assert mid.phase == :choosing_color
+
+      {:ok, s} = Rules.choose_color(mid, "p1", :green)
+      assert s.current_color == :green
+      assert s.phase == :playing
+      assert s.current_player == "p2"
+    end
+
+    test "Wild Draw Four: следующий берёт 4 карты и пропускается" do
+      state =
+        three_player_state(%{
+          phase: :choosing_color,
+          pending: {:choose_color, "p1"},
+          discard_pile: [wild4(), num(:red, 5)],
+          draw_pile: [
+            num(:green, 1),
+            num(:green, 2),
+            num(:green, 3),
+            num(:green, 4),
+            num(:green, 5)
+          ]
+        })
+
+      {:ok, s} = Rules.choose_color(state, "p1", :yellow, @identity)
+
+      assert s.current_color == :yellow
+      assert s.phase == :playing
+      assert s.hands["p2"] == [num(:green, 1), num(:green, 2), num(:green, 3), num(:green, 4)]
+      assert s.draw_pile == [num(:green, 5)]
+      assert s.current_player == "p3"
+    end
+
+    test "нельзя выбирать цвет не за того игрока" do
+      state =
+        three_player_state(%{
+          phase: :choosing_color,
+          pending: {:choose_color, "p1"},
+          discard_pile: [wild(), num(:red, 5)]
+        })
+
+      assert Rules.choose_color(state, "p2", :blue) == {:error, :not_your_choice}
+    end
+
+    test "нельзя выбрать недопустимый цвет" do
+      state =
+        three_player_state(%{
+          phase: :choosing_color,
+          pending: {:choose_color, "p1"},
+          discard_pile: [wild(), num(:red, 5)]
+        })
+
+      assert Rules.choose_color(state, "p1", :rainbow) == {:error, :invalid_color}
+    end
+
+    test "нельзя выбирать цвет вне фазы :choosing_color" do
+      state = three_player_state(%{})
+      assert Rules.choose_color(state, "p1", :blue) == {:error, :not_choosing_color}
+    end
+  end
+
   # 3-игроковое состояние партии в фазе :playing; overrides переопределяют поля.
   defp three_player_state(overrides) do
     defaults = %{
