@@ -1,7 +1,7 @@
 defmodule Uno.Game.ManagerTest do
   use ExUnit.Case, async: true
 
-  alias Uno.Game.{Manager, Server, State}
+  alias Uno.Game.{Manager, Server}
 
   defp unique_code, do: "room-#{System.unique_integer([:positive])}"
   defp player(id, is_bot \\ false), do: %{id: id, name: id, is_bot: is_bot}
@@ -31,10 +31,10 @@ defmodule Uno.Game.ManagerTest do
   end
 
   describe "join/2 и project/2" do
-    test "добавляет игрока в лобби" do
+    test "добавляет игрока в лобби (возвращает ростер, не полный State)" do
       {code, _} = new_game()
-      assert {:ok, %State{} = state} = Manager.join(code, player("p1"))
-      assert Enum.map(state.players, & &1.id) == ["p1"]
+      assert {:ok, players} = Manager.join(code, player("p1"))
+      assert Enum.map(players, & &1.id) == ["p1"]
     end
 
     test "проекция отдаёт свою руку, у соперников только число карт" do

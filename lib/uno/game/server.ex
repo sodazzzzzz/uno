@@ -45,9 +45,13 @@ defmodule Uno.Game.Server do
   @doc """
   Добавляет игрока в лобби. Управление лобби (не правила игры): только в фазе
   `:lobby`, не больше #{@max_players} игроков, без повтора `id`.
+
+  При успехе возвращает обновлённый **ростер** (`[player]`), а НЕ полный `State`:
+  полное состояние (с руками) не должно покидать процесс — иначе инвариант
+  скрытой информации (§4.2) легко нарушить, уронив `State` в assigns LiveView.
   """
   @spec add_player(String.t(), player) ::
-          {:ok, State.t()} | {:error, :game_started | :full | :already_joined}
+          {:ok, [player]} | {:error, :game_started | :full | :already_joined}
   def add_player(room_code, player), do: GenServer.call(via(room_code), {:add_player, player})
 
   @doc "Адресный кортеж процесса партии в `Registry`."
@@ -74,7 +78,7 @@ defmodule Uno.Game.Server do
     case validate_join(state, player) do
       :ok ->
         new_state = State.add_player(state, player)
-        {:reply, {:ok, new_state}, new_state}
+        {:reply, {:ok, new_state.players}, new_state}
 
       {:error, _reason} = error ->
         {:reply, error, state}

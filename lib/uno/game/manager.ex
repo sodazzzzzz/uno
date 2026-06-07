@@ -35,9 +35,9 @@ defmodule Uno.Game.Manager do
     end
   end
 
-  @doc "Добавляет игрока в лобби партии (см. `Server.add_player/2`)."
+  @doc "Добавляет игрока в лобби партии; возвращает ростер (см. `Server.add_player/2`)."
   @spec join(String.t(), Server.player()) ::
-          {:ok, Uno.Game.State.t()} | {:error, :game_started | :full | :already_joined}
+          {:ok, [Server.player()]} | {:error, :game_started | :full | :already_joined}
   def join(room_code, player), do: Server.add_player(room_code, player)
 
   @doc "Проекция состояния партии для игрока."
