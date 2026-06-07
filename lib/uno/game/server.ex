@@ -9,8 +9,13 @@ defmodule Uno.Game.Server do
 
   Сервер НЕ содержит правил UNO — он хранит `Uno.Game.State`, принимает
   сообщения и делегирует в чистый `Uno.Game.Rules` (golden rule: правила —
-  только в чистом слое). Здесь — управление лобби и проекция; старт партии,
-  действия игроков, broadcast и таймер хода появятся следующими кусками.
+  только в чистом слое). Здесь — управление лобби, старт партии, действия игроков
+  (делегируются в `Rules`) и broadcast обновлений через PubSub. Таймер хода
+  появится следующим куском.
+
+  Broadcast — это только уведомление `{:game_update, room_code}` в топик
+  `"game:" <> room_code`: полный `State` по шине не ходит (иначе утечёт скрытое
+  состояние), подписчики (LiveView) сами берут свою проекцию через `project/2`.
 
   `restart: :temporary` — без персистентности воскрешать упавшую партию пустой
   бессмысленно; изоляцию даёт сам `:one_for_one`-супервизор.
@@ -18,9 +23,10 @@ defmodule Uno.Game.Server do
 
   use GenServer, restart: :temporary
 
-  alias Uno.Game.{Rules, State}
+  alias Uno.Game.{Deck, Rules, State}
 
   @max_players 4
+  @min_players 2
 
   @typedoc "Игрок, как его принимает лобби."
   @type player :: %{id: State.player_id(), name: String.t(), is_bot: boolean}
@@ -58,6 +64,36 @@ defmodule Uno.Game.Server do
   @spec via(String.t()) :: {:via, module, {module, String.t()}}
   def via(room_code), do: {:via, Registry, {Uno.Game.Registry, room_code}}
 
+  @doc "Топик PubSub с обновлениями партии (`{:game_update, room_code}`)."
+  @spec topic(String.t()) :: String.t()
+  def topic(room_code), do: "game:" <> room_code
+
+  @doc """
+  Начинает партию: раздаёт карты (`Rules.deal/2` на свежей перемешанной колоде).
+  Нужны фаза `:lobby` и хотя бы #{@min_players} игрока.
+  """
+  @spec start_game(String.t()) :: :ok | {:error, :not_enough_players | :already_started}
+  def start_game(room_code), do: GenServer.call(via(room_code), :start_game)
+
+  @doc "Игрок `player_id` играет карту `card`."
+  @spec play(String.t(), State.player_id(), Deck.card()) :: :ok | {:error, Rules.reason()}
+  def play(room_code, player_id, card),
+    do: GenServer.call(via(room_code), {:play, player_id, card})
+
+  @doc "Игрок `player_id` добирает карту."
+  @spec draw(String.t(), State.player_id()) :: :ok | {:error, Rules.reason()}
+  def draw(room_code, player_id), do: GenServer.call(via(room_code), {:draw, player_id})
+
+  @doc "Игрок `player_id` пасует (после добора)."
+  @spec pass(String.t(), State.player_id()) :: :ok | {:error, Rules.reason()}
+  def pass(room_code, player_id), do: GenServer.call(via(room_code), {:pass, player_id})
+
+  @doc "Игрок `player_id` выбирает активный цвет после Wild/Wild Draw Four."
+  @spec choose_color(String.t(), State.player_id(), Deck.color()) ::
+          :ok | {:error, Rules.reason()}
+  def choose_color(room_code, player_id, color),
+    do: GenServer.call(via(room_code), {:choose_color, player_id, color})
+
   # --- GenServer ---
 
   @impl true
@@ -83,6 +119,38 @@ defmodule Uno.Game.Server do
       {:error, _reason} = error ->
         {:reply, error, state}
     end
+  end
+
+  def handle_call(:start_game, _from, state), do: reply_with(start(state), state)
+
+  def handle_call({:play, player_id, card}, _from, state),
+    do: reply_with(Rules.apply_play(state, player_id, card), state)
+
+  def handle_call({:draw, player_id}, _from, state),
+    do: reply_with(Rules.apply_draw(state, player_id), state)
+
+  def handle_call({:pass, player_id}, _from, state),
+    do: reply_with(Rules.pass(state, player_id), state)
+
+  def handle_call({:choose_color, player_id, color}, _from, state),
+    do: reply_with(Rules.choose_color(state, player_id, color), state)
+
+  # На успех правила — обновляем состояние и рассылаем уведомление; на отказ —
+  # состояние не трогаем и возвращаем ошибку вызывающему.
+  defp reply_with({:ok, new_state}, _old_state), do: {:reply, :ok, broadcast(new_state)}
+  defp reply_with({:error, _reason} = error, old_state), do: {:reply, error, old_state}
+
+  defp start(%State{phase: :lobby, players: players} = state)
+       when length(players) >= @min_players do
+    {:ok, Rules.deal(state, Deck.shuffle(Deck.new()))}
+  end
+
+  defp start(%State{phase: :lobby}), do: {:error, :not_enough_players}
+  defp start(%State{}), do: {:error, :already_started}
+
+  defp broadcast(%State{room_code: room_code} = state) do
+    Phoenix.PubSub.broadcast(Uno.PubSub, topic(room_code), {:game_update, room_code})
+    state
   end
 
   # Проверки лобби (не правила хода): фаза, вместимость, уникальность id.
