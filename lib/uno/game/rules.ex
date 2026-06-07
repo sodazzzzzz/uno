@@ -14,10 +14,11 @@ defmodule Uno.Game.Rules do
   Покрывает старт-раздачу (`deal/2`), следующего игрока (`next_player/1`),
   проекцию (`project/2`), валидность хода (`playable?/3`), применение хода —
   розыгрыш карты с эффектами Skip/Reverse/Draw Two/Wild/Wild+4 (`apply_play/3`),
-  добор (`apply_draw/2`), пас после добора (`pass/2`) и резолв выбора цвета после
+  добор (`apply_draw/2`), пас после добора (`pass/2`), резолв выбора цвета после
   Wild/Wild+4 (`choose_color/3` — выход из `:choosing_color`, для Wild Draw Four
-  добор 4 со скипом). Эффекты Skip/Reverse (включая «Reverse при 2 = Skip»)
-  построены поверх `next_player/1`.
+  добор 4 со скипом) и авто-выбор цвета по большинству для таймаута
+  (`auto_color/2`, `auto_choose_color/3`). Эффекты Skip/Reverse (включая «Reverse
+  при 2 = Skip») построены поверх `next_player/1`.
 
   Модель хода: в свой ход игрок либо играет любую подходящую карту
   (`apply_play/3`), либо добирает 1 карту (`apply_draw/2`). После добора ход
@@ -26,8 +27,10 @@ defmodule Uno.Game.Rules do
   `{:drew, player_id}` — поэтому правило «пас только после добора» живёт в чистом
   слое, а не в процессе.
 
-  Пока НЕ здесь (следующий кусок правил): авто-выбор цвета по большинству при
-  таймауте `:choosing_color` (увязан с серверным таймером).
+  Пока НЕ здесь (процессный слой): сам таймер хода — когда срабатывает таймаут
+  (`Process.send_after`, `turn_ref`) — это `Game.Server`. Чистые правила лишь
+  отвечают, ЧТО делать при таймауте (добор/пас для обычного хода, `auto_color`
+  для `:choosing_color`).
   """
 
   alias Uno.Game.{Deck, State}
@@ -365,6 +368,72 @@ defmodule Uno.Game.Rules do
     do: {:error, :not_your_choice}
 
   def choose_color(%State{}, _player_id, _color, _shuffler), do: {:error, :not_choosing_color}
+
+  @doc """
+  Цвет для авто-выбора по руке `hand` — поведение таймаута фазы `:choosing_color`
+  (§4.3).
+
+  Берётся **цвет большинства** среди цветных карт руки (Wild / Wild Draw Four с
+  `color: nil` не учитываются). **При равенстве** — случайный из лидеров; **если
+  цветных карт нет вовсе** — случайный из всех четырёх цветов.
+
+  Случайность инъектируется через `chooser` (`[color] -> color`): по умолчанию
+  `&Enum.random/1` (продакшн), в тестах передают детерминированную функцию, чтобы
+  «случайный» был воспроизводим (§6 — без незафиксированного `:rand`). Список
+  кандидатов всегда отсортирован, поэтому результат при фиксированном `chooser`
+  детерминирован.
+  """
+  @spec auto_color([Deck.card()], ([Deck.color()] -> Deck.color())) :: Deck.color()
+  def auto_color(hand, chooser \\ &Enum.random/1) when is_function(chooser, 1) do
+    case leading_colors(hand) do
+      [] -> chooser.(@colors)
+      leaders -> chooser.(leaders)
+    end
+  end
+
+  # Цвета-лидеры по частоте в руке (отсортированы); [] — если цветных карт нет.
+  defp leading_colors(hand) do
+    counts =
+      hand
+      |> Enum.map(& &1.color)
+      |> Enum.reject(&is_nil/1)
+      |> Enum.frequencies()
+
+    case counts do
+      empty when map_size(empty) == 0 ->
+        []
+
+      counts ->
+        max = counts |> Map.values() |> Enum.max()
+        for({color, count} <- counts, count == max, do: color) |> Enum.sort()
+    end
+  end
+
+  @doc """
+  Резолвит таймаут фазы `:choosing_color`: выбирает цвет за зависшего игрока и
+  применяет его как обычный выбор.
+
+  Для игрока из `pending == {:choose_color, id}` берёт `auto_color/2` его руки и
+  вызывает `choose_color/3` (Wild → ход следующему; Wild Draw Four → следующий
+  берёт 4 и пропускается). Вне фазы `:choosing_color` — `{:error, :not_choosing_color}`.
+
+  `chooser` (случайность выбора цвета) и `shuffler` (добор 4 для Wild+4)
+  инъектируются для детерминизма; по умолчанию `&Enum.random/1` и `Deck.shuffle/1`.
+  """
+  @spec auto_choose_color(State.t(), ([Deck.color()] -> Deck.color()), Deck.shuffler()) ::
+          {:ok, State.t()} | {:error, reason}
+  def auto_choose_color(state, chooser \\ &Enum.random/1, shuffler \\ &Deck.shuffle/1)
+
+  def auto_choose_color(
+        %State{phase: :choosing_color, pending: {:choose_color, player_id}} = state,
+        chooser,
+        shuffler
+      ) do
+    color = auto_color(Map.get(state.hands, player_id, []), chooser)
+    choose_color(state, player_id, color, shuffler)
+  end
+
+  def auto_choose_color(%State{}, _chooser, _shuffler), do: {:error, :not_choosing_color}
 
   defp check_in_hand(%State{hands: hands}, player_id, card) do
     if card in Map.get(hands, player_id, []), do: :ok, else: {:error, :card_not_in_hand}
