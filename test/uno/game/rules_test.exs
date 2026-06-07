@@ -705,6 +705,60 @@ defmodule Uno.Game.RulesTest do
     end
   end
 
+  describe "apply_decision/4 — диспетчер решения хода" do
+    test "{:play, card} играет карту" do
+      state =
+        three_player_state(%{
+          hands: %{"p1" => [num(:red, 7), num(:blue, 1)], "p2" => [], "p3" => []}
+        })
+
+      {:ok, s} = Rules.apply_decision(state, "p1", {:play, num(:red, 7)})
+
+      assert s.discard_pile == [num(:red, 7), num(:red, 5)]
+      assert s.current_player == "p2"
+    end
+
+    test ":draw добирает карту" do
+      state =
+        three_player_state(%{
+          hands: %{"p1" => [], "p2" => [], "p3" => []},
+          draw_pile: [num(:green, 1)]
+        })
+
+      {:ok, s} = Rules.apply_decision(state, "p1", :draw, @identity)
+
+      assert s.hands["p1"] == [num(:green, 1)]
+      assert s.pending == {:drew, "p1"}
+    end
+
+    test ":pass пасует после добора" do
+      state = three_player_state(%{pending: {:drew, "p1"}})
+      {:ok, s} = Rules.apply_decision(state, "p1", :pass)
+      assert s.current_player == "p2"
+    end
+
+    test "{:choose_color, color} выбирает цвет" do
+      state =
+        three_player_state(%{
+          phase: :choosing_color,
+          pending: {:choose_color, "p1"},
+          discard_pile: [wild(), num(:red, 5)]
+        })
+
+      {:ok, s} = Rules.apply_decision(state, "p1", {:choose_color, :blue})
+
+      assert s.current_color == :blue
+      assert s.phase == :playing
+    end
+
+    test "ошибка правила прокидывается (нелегальный ход)" do
+      state =
+        three_player_state(%{hands: %{"p1" => [num(:blue, 9)], "p2" => [], "p3" => []}})
+
+      assert Rules.apply_decision(state, "p1", {:play, num(:blue, 9)}) == {:error, :illegal_card}
+    end
+  end
+
   # 3-игроковое состояние партии в фазе :playing; overrides переопределяют поля.
   defp three_player_state(overrides) do
     defaults = %{

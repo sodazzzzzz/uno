@@ -4,7 +4,7 @@ defmodule Uno.Game.ServerTest do
   alias Uno.Game.{Manager, Server}
 
   defp unique_code, do: "room-#{System.unique_integer([:positive])}"
-  defp player(id), do: %{id: id, name: id, is_bot: false}
+  defp player(id, is_bot \\ false), do: %{id: id, name: id, is_bot: is_bot}
 
   # Партия в лобби с заданными игроками; гасится по завершении теста.
   # opts прокидываются в Server (напр. turn_ms для таймера).
@@ -156,6 +156,42 @@ defmodule Uno.Game.ServerTest do
 
       # Никто не ходит → таймер хода срабатывает → авто-действие шлёт ещё broadcast.
       assert_receive {:game_update, ^code}, 1000
+    end
+  end
+
+  describe "автоход ботов" do
+    test "бот ходит сам и в итоге передаёт ход человеку" do
+      code = lobby([player("bot", true), player("human", false)], bot_delay: 5)
+      Phoenix.PubSub.subscribe(Uno.PubSub, Server.topic(code))
+
+      # Раздача → ходит бот (первый посаженный) → автоход без участия клиента.
+      assert :ok = Server.start_game(code)
+      assert_receive {:game_update, ^code}
+
+      await_current(code, "human")
+      assert Server.state(code).current_player == "human"
+    end
+
+    test "ход человека НЕ запускает автоход" do
+      code = lobby([player("human", false), player("bot", true)], bot_delay: 5)
+      Phoenix.PubSub.subscribe(Uno.PubSub, Server.topic(code))
+
+      assert :ok = Server.start_game(code)
+      assert_receive {:game_update, ^code}
+
+      # Ходит человек — сервер сам ничего не двигает.
+      refute_receive {:game_update, ^code}, 100
+      assert Server.state(code).current_player == "human"
+    end
+  end
+
+  # Ждёт, пока ход дойдёт до игрока `id` (получая broadcast'ы шагов бота).
+  defp await_current(code, id) do
+    receive do
+      {:game_update, ^code} ->
+        unless Server.state(code).current_player == id, do: await_current(code, id)
+    after
+      2000 -> flunk("ход не дошёл до #{id} за 2с")
     end
   end
 end
