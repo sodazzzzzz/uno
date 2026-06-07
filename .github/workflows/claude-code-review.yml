@@ -11,11 +11,37 @@ jobs:
       contents: read
       pull-requests: write
       id-token: write
+    env:
+      # Прогоняем проверки в :test, чтобы credo/компиляция покрывали и test/support,
+      # а build-кэш был когерентен с ci.yml (тот же ключ).
+      MIX_ENV: test
     steps:
       - name: Checkout repository
         uses: actions/checkout@v6
         with:
           fetch-depth: 1
+
+      # Тулчейн для агента: без него ревью не может реально прогнать mix-проверки
+      # и проверяет код только чтением. Зеркалит setup из ci.yml.
+      - name: Set up Elixir/OTP (versions from .tool-versions)
+        uses: erlef/setup-beam@v1
+        id: beam
+        with:
+          version-file: .tool-versions
+          version-type: strict
+
+      - name: Cache deps and _build
+        uses: actions/cache@v4
+        with:
+          path: |
+            deps
+            _build
+          key: ${{ runner.os }}-mix-${{ steps.beam.outputs.otp-version }}-${{ steps.beam.outputs.elixir-version }}-${{ hashFiles('**/mix.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-mix-${{ steps.beam.outputs.otp-version }}-${{ steps.beam.outputs.elixir-version }}-
+
+      - name: Install dependencies
+        run: mix deps.get
 
       - name: Run Claude code review
         uses: anthropics/claude-code-action@v1
@@ -28,6 +54,7 @@ jobs:
           plugins: 'code-review@claude-code-plugins'
           prompt: '/code-review:code-review ${{ github.repository }}/pull/${{ github.event.pull_request.number }}'
           claude_args: |
-            --append-system-prompt "Strictly enforce the project review guidelines in .github/REVIEW_GUIDELINES.md — read that file first. Verify the architecture invariants and required tests it lists. Follow its review philosophy: prioritize correctness, security and reliability; reject speculative generality, style-only nits and over-engineering with a brief note; report each finding with a severity and let the author decide what to apply. ALWAYS post exactly one top-level (non-inline) summary comment on the PR with the outcome, even when there are no findings: if nothing was found, state clearly that no issues were found and the PR is OK to merge; if there are findings, summarize them with their severities."
+            --append-system-prompt "Strictly enforce the project review guidelines in .github/REVIEW_GUIDELINES.md — read that file first. Verify the architecture invariants and required tests it lists. Follow its review philosophy: prioritize correctness, security and reliability; reject speculative generality, style-only nits and over-engineering with a brief note; report each finding with a severity and let the author decide what to apply. You HAVE Elixir and mix available on this runner: actually verify the change by running 'mix format --check-formatted', 'mix test' and 'mix credo --strict' instead of trusting the author's claims — report any failures. ALWAYS post exactly one top-level (non-inline) summary comment on the PR with the outcome, even when there are no findings: if nothing was found, state clearly that no issues were found and the PR is OK to merge; if there are findings, summarize them with their severities."
+            --allowedTools "Bash(mix format:*),Bash(mix test:*),Bash(mix credo:*),Bash(mix compile:*),Bash(mix deps.get:*)"
             --model claude-opus-4-8
             --max-turns 25
