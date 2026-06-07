@@ -30,8 +30,13 @@ defmodule UnoWeb.LobbyLive do
   end
 
   defp create(socket, name) do
-    code = create_room(socket.assigns.player_id, name)
-    {:noreply, push_navigate(socket, to: ~p"/game/#{code}")}
+    case create_room(socket.assigns.player_id, name) do
+      {:ok, code} ->
+        {:noreply, push_navigate(socket, to: ~p"/game/#{code}")}
+
+      :error ->
+        {:noreply, put_flash(socket, :error, "Не удалось создать комнату, попробуйте ещё раз")}
+    end
   end
 
   defp join(socket, _name, "") do
@@ -62,8 +67,9 @@ defmodule UnoWeb.LobbyLive do
     player = %{id: player_id, name: name, is_bot: false}
 
     case Manager.create(code, players: [player]) do
-      {:ok, _pid} -> code
+      {:ok, _pid} -> {:ok, code}
       {:error, :already_exists} when attempts > 0 -> create_room(player_id, name, attempts - 1)
+      {:error, :already_exists} -> :error
     end
   end
 
