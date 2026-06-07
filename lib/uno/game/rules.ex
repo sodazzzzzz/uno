@@ -435,6 +435,43 @@ defmodule Uno.Game.Rules do
 
   def auto_choose_color(%State{}, _chooser, _shuffler), do: {:error, :not_choosing_color}
 
+  @doc """
+  Авто-действие при таймауте хода (§4.3) — ЧТО делать, когда время вышло.
+
+  В фазе `:playing` — штраф за тормоза: игрок добирает 1 карту и ход переходит
+  дальше (авто-розыгрыша добранной карты НЕТ). В фазе `:choosing_color` — цвет
+  по большинству (`auto_choose_color/3`). Возвращает `{:ok, state}`.
+
+  «Когда» сработает таймаут — дело процессного слоя (`Game.Server`); «что» —
+  здесь, в чистом правиле. `chooser`/`shuffler` инъектируются для детерминизма.
+  """
+  @spec apply_timeout(State.t(), ([Deck.color()] -> Deck.color()), Deck.shuffler()) ::
+          {:ok, State.t()}
+  def apply_timeout(state, chooser \\ &Enum.random/1, shuffler \\ &Deck.shuffle/1)
+
+  def apply_timeout(%State{phase: :choosing_color} = state, chooser, shuffler),
+    do: auto_choose_color(state, chooser, shuffler)
+
+  def apply_timeout(
+        %State{phase: :playing, current_player: player_id} = state,
+        _chooser,
+        shuffler
+      ) do
+    case apply_draw(state, player_id, shuffler) do
+      {:ok, drawn} ->
+        case pass(drawn, player_id) do
+          {:ok, passed} -> {:ok, passed}
+          # Колода была пуста: apply_draw уже передал ход, пасовать нечем.
+          {:error, _reason} -> {:ok, drawn}
+        end
+
+      # Игрок уже добрал в этот ход и завис (`pending: {:drew, player_id}`):
+      # второго добора нет — просто передаём ход.
+      {:error, :already_drew} ->
+        pass(state, player_id)
+    end
+  end
+
   defp check_in_hand(%State{hands: hands}, player_id, card) do
     if card in Map.get(hands, player_id, []), do: :ok, else: {:error, :card_not_in_hand}
   end
