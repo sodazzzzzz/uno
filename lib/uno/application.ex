@@ -11,8 +11,9 @@ defmodule Uno.Application do
       UnoWeb.Telemetry,
       {DNSCluster, query: Application.get_env(:uno, :dns_cluster_query) || :ignore},
       {Phoenix.PubSub, name: Uno.PubSub},
-      # Start a worker by calling: Uno.Worker.start_link(arg)
-      # {Uno.Worker, arg},
+      # Адресация партий по room_code и по процессу на партию.
+      {Registry, keys: :unique, name: Uno.Game.Registry},
+      {DynamicSupervisor, name: Uno.Game.Supervisor, strategy: :one_for_one},
       # Start to serve requests, typically the last entry
       UnoWeb.Endpoint
     ]
