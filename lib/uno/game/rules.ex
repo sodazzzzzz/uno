@@ -62,11 +62,16 @@ defmodule Uno.Game.Rules do
   направление `:cw`. Таймер хода (`turn_ref`/`turn_deadline`) выставляет уже
   процессный слой — это не дело чистых правил.
 
-  Ожидает непустой список игроков и колоду, в которой есть хотя бы одна числовая
-  карта (для полной 108-карточной колоды это всегда так).
+  Контракт (нарушение — ошибка вызывающего, не пользовательский ввод): колода
+  должна быть достаточно большой для полной раздачи плюс стартовой карты
+  (`length(deck) > players * #{@hand_size}`, иначе ход не матчится —
+  `FunctionClauseError`) и содержать хотя бы одну числовую карту для старта
+  (иначе `ArgumentError` с понятным сообщением). Для полной 108-карточной колоды
+  оба условия выполняются всегда.
   """
   @spec deal(State.t(), [Deck.card()]) :: State.t()
-  def deal(%State{players: [first | _] = players} = state, deck) when is_list(deck) do
+  def deal(%State{players: [first | _] = players} = state, deck)
+      when is_list(deck) and length(deck) > length(players) * @hand_size do
     {hands, rest} = deal_hands(players, deck)
     {start_card, draw_pile} = draw_starting_card(rest)
 
@@ -102,6 +107,10 @@ defmodule Uno.Game.Rules do
 
   defp draw_starting_card([card | rest], skipped) do
     draw_starting_card(rest, [card | skipped])
+  end
+
+  defp draw_starting_card([], _skipped) do
+    raise ArgumentError, "колода не содержит числовой карты для стартового сброса"
   end
 
   @doc """

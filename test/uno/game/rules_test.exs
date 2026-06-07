@@ -76,6 +76,29 @@ defmodule Uno.Game.RulesTest do
                %{color: :yellow, type: :skip}
              ]
     end
+
+    test "падает с понятным сообщением, если в колоде нет числовой карты для старта" do
+      players = [player("p1"), player("p2")]
+      hand_cards = for color <- [:red, :blue], n <- 0..6, do: %{color: color, type: {:number, n}}
+
+      # После раздачи в остатке только акшн-карты — стартовой числовой нет.
+      deck = hand_cards ++ [%{color: :red, type: :skip}, %{color: :blue, type: :reverse}]
+
+      assert_raise ArgumentError, ~r/числовой карты/, fn ->
+        "ROOM" |> State.new(players) |> Rules.deal(deck)
+      end
+    end
+
+    test "не матчит колоду, которой не хватает на полную раздачу + старт" do
+      players = [player("p1"), player("p2")]
+
+      # Нужно > 2*7 = 14 карт; даём ровно 14 — на стартовую не остаётся.
+      deck = for color <- [:red, :blue], n <- 0..6, do: %{color: color, type: {:number, n}}
+
+      assert_raise FunctionClauseError, fn ->
+        "ROOM" |> State.new(players) |> Rules.deal(deck)
+      end
+    end
   end
 
   describe "next_player/1 — следующий игрок по направлению" do
