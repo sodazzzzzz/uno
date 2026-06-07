@@ -657,6 +657,38 @@ defmodule Uno.Game.RulesTest do
     end
   end
 
+  describe "apply_timeout/3 — авто-действие при таймауте" do
+    test ":playing — текущий игрок добирает 1 карту и ход переходит дальше" do
+      state =
+        three_player_state(%{
+          hands: %{"p1" => [num(:red, 7)], "p2" => [], "p3" => []},
+          draw_pile: [num(:green, 1), num(:green, 2)]
+        })
+
+      {:ok, s} = Rules.apply_timeout(state, &hd/1, @identity)
+
+      assert s.hands["p1"] == [num(:red, 7), num(:green, 1)]
+      assert s.current_player == "p2"
+      assert s.pending == nil
+    end
+
+    test ":choosing_color — цвет выбирается по большинству, ход переходит" do
+      state =
+        three_player_state(%{
+          phase: :choosing_color,
+          pending: {:choose_color, "p1"},
+          discard_pile: [wild(), num(:red, 5)],
+          hands: %{"p1" => [num(:blue, 1), num(:blue, 2)], "p2" => [], "p3" => []}
+        })
+
+      {:ok, s} = Rules.apply_timeout(state, &hd/1, @identity)
+
+      assert s.current_color == :blue
+      assert s.phase == :playing
+      assert s.current_player == "p2"
+    end
+  end
+
   # 3-игроковое состояние партии в фазе :playing; overrides переопределяют поля.
   defp three_player_state(overrides) do
     defaults = %{

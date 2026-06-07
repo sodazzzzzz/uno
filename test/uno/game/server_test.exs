@@ -7,9 +7,10 @@ defmodule Uno.Game.ServerTest do
   defp player(id), do: %{id: id, name: id, is_bot: false}
 
   # Партия в лобби с заданными игроками; гасится по завершении теста.
-  defp lobby(players) do
+  # opts прокидываются в Server (напр. turn_ms для таймера).
+  defp lobby(players, opts \\ []) do
     code = unique_code()
-    {:ok, _pid} = Manager.create(code, players: players)
+    {:ok, _pid} = Manager.create(code, Keyword.put(opts, :players, players))
     on_exit(fn -> Manager.stop(code) end)
     code
   end
@@ -85,6 +86,59 @@ defmodule Uno.Game.ServerTest do
 
       assert Server.draw(code, "p2") == {:error, :not_your_turn}
       refute_receive {:game_update, ^code}
+    end
+  end
+
+  describe "таймер хода (turn_ref-схема §4.3)" do
+    test "успешное действие взводит таймер: turn_ref >= 1 и выставлен turn_deadline" do
+      code = lobby([player("p1"), player("p2")])
+      :ok = Server.start_game(code)
+
+      state = Server.state(code)
+      assert state.turn_ref >= 1
+      assert is_integer(state.turn_deadline)
+    end
+
+    test "ТЕСТ ГОНКИ: протухший {:turn_timeout, old_ref} безвреден" do
+      code = lobby([player("p1"), player("p2")])
+      :ok = Server.start_game(code)
+      {:ok, pid} = Manager.find(code)
+      before = Server.state(code)
+
+      # ref 0 — стартовый, до первого взвода; заведомо протухший.
+      send(pid, {:turn_timeout, 0})
+
+      # Следующий call обработается ПОСЛЕ info (мейлбокс FIFO) — значит info отработал.
+      after_state = Server.state(code)
+
+      assert after_state.turn_ref == before.turn_ref
+      assert after_state.current_player == before.current_player
+      assert after_state.hands == before.hands
+    end
+
+    test "таймаут с текущим ref применяет авто-действие: добор 1 + передача хода" do
+      code = lobby([player("p1"), player("p2")])
+      :ok = Server.start_game(code)
+      {:ok, pid} = Manager.find(code)
+      before = Server.state(code)
+
+      send(pid, {:turn_timeout, before.turn_ref})
+      after_state = Server.state(code)
+
+      assert length(after_state.hands["p1"]) == 8
+      assert after_state.current_player == "p2"
+      assert after_state.turn_ref == before.turn_ref + 1
+    end
+
+    test "живой таймаут реально срабатывает (send_after end-to-end)" do
+      code = lobby([player("p1"), player("p2")], turn_ms: 40)
+      Phoenix.PubSub.subscribe(Uno.PubSub, Server.topic(code))
+
+      assert :ok = Server.start_game(code)
+      assert_receive {:game_update, ^code}
+
+      # Никто не ходит → таймер хода срабатывает → авто-действие шлёт ещё broadcast.
+      assert_receive {:game_update, ^code}, 1000
     end
   end
 end
