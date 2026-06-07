@@ -188,6 +188,16 @@ defmodule Uno.Game.Rules do
           | :not_your_choice
           | :invalid_color
 
+  @typedoc """
+  Единая форма «что сделать в свой ход» — её выбирает `Uno.Game.Bot.decide/1`, а
+  применяет `apply_decision/4`.
+  """
+  @type decision ::
+          {:play, Deck.card()}
+          | :draw
+          | :pass
+          | {:choose_color, Deck.color()}
+
   @doc """
   Можно ли сыграть карту `card` поверх верхней карты сброса `top` при активном
   цвете `current_color` (§5).
@@ -471,6 +481,31 @@ defmodule Uno.Game.Rules do
         pass(state, player_id)
     end
   end
+
+  @doc """
+  Применяет решение `decision` игрока `player_id` — диспетчер по тегу к нужному
+  ходу: `{:play, card}` → `apply_play/4`, `:draw` → `apply_draw/3`, `:pass` →
+  `pass/2`, `{:choose_color, color}` → `choose_color/4`. Возвращает их результат
+  `{:ok, state} | {:error, reason}`.
+
+  Позволяет единообразно применить ход бота (`Uno.Game.Bot.decide/1`). `shuffler`
+  инъектируется (нужен при добор/розыгрыше с перетасовкой пустой колоды).
+  """
+  @spec apply_decision(State.t(), State.player_id(), decision, Deck.shuffler()) ::
+          {:ok, State.t()} | {:error, reason}
+  def apply_decision(state, player_id, decision, shuffler \\ &Deck.shuffle/1)
+
+  def apply_decision(state, player_id, {:play, card}, shuffler),
+    do: apply_play(state, player_id, card, shuffler)
+
+  def apply_decision(state, player_id, :draw, shuffler),
+    do: apply_draw(state, player_id, shuffler)
+
+  def apply_decision(state, player_id, :pass, _shuffler),
+    do: pass(state, player_id)
+
+  def apply_decision(state, player_id, {:choose_color, color}, shuffler),
+    do: choose_color(state, player_id, color, shuffler)
 
   defp check_in_hand(%State{hands: hands}, player_id, card) do
     if card in Map.get(hands, player_id, []), do: :ok, else: {:error, :card_not_in_hand}

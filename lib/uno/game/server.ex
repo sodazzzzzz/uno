@@ -10,7 +10,10 @@ defmodule Uno.Game.Server do
   Сервер НЕ содержит правил UNO — он хранит `Uno.Game.State`, принимает
   сообщения и делегирует в чистый `Uno.Game.Rules` (golden rule: правила —
   только в чистом слое). Здесь — управление лобби, старт партии, действия игроков
-  (делегируются в `Rules`), broadcast обновлений через PubSub и **таймер хода**.
+  (делегируются в `Rules`), broadcast обновлений через PubSub, **таймер хода** и
+  **автоход ботов** (решение берётся у `Uno.Game.Bot.decide/1` и применяется
+  `Rules.apply_decision/4`; сам ход — асинхронное `{:bot_move, ref}` с небольшой
+  задержкой `:bot_delay`, привязка к `turn_ref` обезвреживает устаревшие).
 
   Broadcast — это только уведомление `{:game_update, room_code}` в топик
   `"game:" <> room_code`: полный `State` по шине не ходит (иначе утечёт скрытое
@@ -34,11 +37,14 @@ defmodule Uno.Game.Server do
 
   use GenServer, restart: :temporary
 
-  alias Uno.Game.{Deck, Rules, State}
+  require Logger
+
+  alias Uno.Game.{Bot, Deck, Rules, State}
 
   @max_players 4
   @min_players 2
   @default_turn_ms :timer.seconds(30)
+  @default_bot_delay 800
 
   @typedoc "Игрок, как его принимает лобби."
   @type player :: %{id: State.player_id(), name: String.t(), is_bot: boolean}
@@ -113,7 +119,8 @@ defmodule Uno.Game.Server do
     room_code = Keyword.fetch!(opts, :room_code)
     players = Keyword.get(opts, :players, [])
     turn_ms = Keyword.get(opts, :turn_ms, @default_turn_ms)
-    {:ok, %{game: State.new(room_code, players), turn_ms: turn_ms}}
+    bot_delay = Keyword.get(opts, :bot_delay, @default_bot_delay)
+    {:ok, %{game: State.new(room_code, players), turn_ms: turn_ms, bot_delay: bot_delay}}
   end
 
   @impl true
@@ -159,17 +166,63 @@ defmodule Uno.Game.Server do
   # Протухший таймаут от уже сыгранного хода — безвреден, игнорируем.
   def handle_info({:turn_timeout, _stale_ref}, s), do: {:noreply, s}
 
+  # Ход бота: то же turn_ref-сопоставление паттерном. Решение берём у чистого
+  # Bot.decide из проекции и применяем через Rules.apply_decision.
+  def handle_info({:bot_move, ref}, %{game: %State{turn_ref: ref} = game} = s) do
+    bot_id = current_actor(game)
+
+    case Rules.apply_decision(game, bot_id, Bot.decide(Rules.project(game, bot_id))) do
+      {:ok, new_game} ->
+        {:noreply, commit(s, new_game)}
+
+      # Бот выдал нелегальный ход (не должно случаться) — не двигаемся и не
+      # падаем; на этот ход всё равно взведён таймер, он подстрахует. Логируем,
+      # чтобы реальный баг бота не превратился в тихую паузу до таймаута.
+      {:error, reason} ->
+        Logger.warning(
+          "Bot #{inspect(bot_id)} в партии #{game.room_code} вернул нелегальный ход " <>
+            "(#{inspect(reason)}); ждём таймер хода"
+        )
+
+        {:noreply, s}
+    end
+  end
+
+  # Устаревший бот-ход (ход уже сменился) — игнорируем.
+  def handle_info({:bot_move, _stale_ref}, s), do: {:noreply, s}
+
   # На успех правила — применяем состояние (перевзвод таймера + broadcast); на
   # отказ — состояние не трогаем, возвращаем ошибку вызывающему.
   defp reply_with({:ok, new_game}, s), do: {:reply, :ok, commit(s, new_game)}
   defp reply_with({:error, _reason} = error, s), do: {:reply, error, s}
 
-  # Фиксирует новое состояние игры: взводит таймер хода и шлёт уведомление.
+  # Фиксирует новое состояние игры: взводит таймер хода, шлёт уведомление и (если
+  # ходить должен бот) планирует его автоход.
   defp commit(s, new_game) do
     armed = arm_turn(new_game, s.turn_ms)
     broadcast(armed)
+    maybe_schedule_bot(armed, s.bot_delay)
     %{s | game: armed}
   end
+
+  # Если действовать должен бот — планируем его ход отдельным сообщением с
+  # задержкой (асинхронно, не блокируя вызывающего). Привязка к `turn_ref`.
+  defp maybe_schedule_bot(game, delay) do
+    if bot_turn?(game), do: Process.send_after(self(), {:bot_move, game.turn_ref}, delay)
+    :ok
+  end
+
+  defp bot_turn?(game) do
+    case current_actor(game) do
+      nil -> false
+      actor_id -> Enum.any?(game.players, &(&1.id == actor_id and &1.is_bot))
+    end
+  end
+
+  # Кто сейчас должен действовать (ходить или выбирать цвет); nil — никто.
+  defp current_actor(%State{phase: :choosing_color, pending: {:choose_color, pid}}), do: pid
+  defp current_actor(%State{phase: :playing, current_player: pid}), do: pid
+  defp current_actor(%State{}), do: nil
 
   # Взвод таймера хода по turn_ref-схеме: ЛЮБОЕ изменение инкрементит `turn_ref`
   # (старый запланированный таймаут протухает сам), и в активной фазе планируется

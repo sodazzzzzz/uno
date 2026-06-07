@@ -26,23 +26,17 @@ defmodule Uno.Game.Bot do
   фаза полировки, не MVP.
   """
 
-  alias Uno.Game.{Deck, Rules}
-
-  @typedoc "Решение бота, которое применит вызывающий (`Game.Server`)."
-  @type decision ::
-          {:play, Deck.card()}
-          | :draw
-          | :pass
-          | {:choose_color, Deck.color()}
+  alias Uno.Game.Rules
 
   @doc """
   Решение бота по проекции `view` (`Rules.project/2`).
 
   В фазе `:playing` возвращает `{:play, card}` / `:draw` / `:pass`, в фазе
-  `:choosing_color` — `{:choose_color, color}`. Вызывается только когда сейчас
+  `:choosing_color` — `{:choose_color, color}` (форма — `Rules.decision/0`,
+  применяется через `Rules.apply_decision/4`). Вызывается только когда сейчас
   очередь этого бота действовать.
   """
-  @spec decide(Rules.projection()) :: decision
+  @spec decide(Rules.projection()) :: Rules.decision()
   def decide(%{phase: :choosing_color, my_hand: hand}) do
     {:choose_color, Rules.auto_color(hand, &hd/1)}
   end
