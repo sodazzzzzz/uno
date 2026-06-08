@@ -296,7 +296,18 @@ defmodule UnoWeb.GameLive do
           :for={opp <- @view.others}
           class={["uno-pod", opp.id == @view.whose_turn && "is-active"]}
         >
-          <div class="uno-pod__avatar">{avatar(opp.name)}</div>
+          <div class="uno-avwrap">
+            <div
+              :if={opp.id == @view.whose_turn and @view.turn_deadline}
+              id={"ring-#{opp.id}"}
+              class="uno-ring"
+              phx-hook=".TurnTimer"
+              data-deadline={@view.turn_deadline}
+              data-duration={@view.turn_ms}
+            >
+            </div>
+            <div class="uno-pod__avatar">{avatar(opp.name)}</div>
+          </div>
           <div class="uno-pod__name">{opp.name}</div>
           <div class="uno-pod__fan">
             <i :for={_ <- 1..min(opp.card_count, 7)//1} class="uno-back"></i>
@@ -318,6 +329,25 @@ defmodule UnoWeb.GameLive do
           <span class="uno-dir">{direction_arrow(@view.direction)}</span>
         </div>
       </section>
+
+      <div class="uno-you">
+        <div class="uno-avwrap">
+          <div
+            :if={@view.whose_turn == @player_id and @view.turn_deadline}
+            id="ring-me"
+            class="uno-ring"
+            phx-hook=".TurnTimer"
+            data-deadline={@view.turn_deadline}
+            data-duration={@view.turn_ms}
+          >
+          </div>
+          <div class="uno-you__avatar">{avatar(name_of(@view, @player_id))}</div>
+        </div>
+        <div class="uno-you__meta">
+          <span class="uno-you__name">{name_of(@view, @player_id)}</span>
+          <span class="uno-you__count">{length(@view.my_hand)} карт</span>
+        </div>
+      </div>
 
       <section class="uno-hand">
         <button
@@ -365,6 +395,28 @@ defmodule UnoWeb.GameLive do
         <.link navigate={~p"/"} class="uno-btn uno-btn--primary">В лобби</.link>
       </div>
     </div>
+
+    <script :type={Phoenix.LiveView.ColocatedHook} name=".TurnTimer">
+      // Косметический отсчёт кольца от серверного turn_deadline (§4.4).
+      // Реальное авто-действие наступает по серверному таймеру, не здесь.
+      export default {
+        mounted() { this.run() },
+        updated() { this.run() },
+        destroyed() { cancelAnimationFrame(this.raf) },
+        run() {
+          cancelAnimationFrame(this.raf)
+          const deadline = Number(this.el.dataset.deadline)
+          const duration = Number(this.el.dataset.duration) || 30000
+          if (!deadline) { this.el.style.setProperty("--p", 1); return }
+          const tick = () => {
+            const p = Math.max(0, Math.min(1, (deadline - Date.now()) / duration))
+            this.el.style.setProperty("--p", p)
+            if (p > 0) this.raf = requestAnimationFrame(tick)
+          }
+          tick()
+        }
+      }
+    </script>
     """
   end
 end

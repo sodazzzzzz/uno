@@ -118,6 +118,13 @@ defmodule UnoWeb.GameLiveTest do
       assert html =~ "Ходит Лео"
     end
 
+    test "на своём ходу рендерится кольцо-таймер с дедлайном", %{conn: conn} do
+      html = render(started(conn))
+
+      assert html =~ ~s(id="ring-me")
+      assert html =~ "data-deadline"
+    end
+
     test "крафтовый нечисловой index не роняет канал (находка ревью)", %{conn: conn} do
       view = started(conn)
 
