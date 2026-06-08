@@ -43,11 +43,6 @@ defmodule Uno.Game.BotTest do
       assert Bot.decide(view) == :draw
     end
 
-    test "нет играбельной карты, но карту уже брали — пасует" do
-      view = playing_view(%{my_hand: [num(:blue, 9)], pending: {:drew, "bot"}})
-      assert Bot.decide(view) == :pass
-    end
-
     test "добрал и появилась играбельная карта — играет её" do
       view = playing_view(%{my_hand: [num(:red, 5)], pending: {:drew, "bot"}})
       assert Bot.decide(view) == {:play, num(:red, 5)}

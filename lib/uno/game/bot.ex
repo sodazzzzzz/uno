@@ -18,8 +18,8 @@ defmodule Uno.Game.Bot do
 
     * есть играбельная карта — играем её, но **бережём чёрные карты**: цветную
       или числовую предпочитаем Wild / Wild Draw Four;
-    * играбельной карты нет и добора в этот ход ещё не было — берём карту;
-    * играбельной карты нет, но карту уже брали — пасуем;
+    * играбельной карты нет — берём карту (если и после добора играть нечем,
+      ход передаёт авто-пас в `Rules.apply_draw/3` — это уже не решение бота);
     * при выборе цвета — берём цвет, которого в руке больше всего.
 
   Более умная игра (стэкинг, придерживание Draw-карт, счёт карт соперников) — это
@@ -31,25 +31,20 @@ defmodule Uno.Game.Bot do
   @doc """
   Решение бота по проекции `view` (`Rules.project/2`).
 
-  В фазе `:playing` возвращает `{:play, card}` / `:draw` / `:pass`, в фазе
-  `:choosing_color` — `{:choose_color, color}` (форма — `Rules.decision/0`,
-  применяется через `Rules.apply_decision/4`). Вызывается только когда сейчас
-  очередь этого бота действовать.
+  В фазе `:playing` возвращает `{:play, card}` или `:draw`, в фазе
+  `:choosing_color` — `{:choose_color, color}` (подмножество `Rules.decision/0`,
+  применяется через `Rules.apply_decision/4`). Бот никогда не пасует сам: если и
+  после добора играть нечем, ход передаёт авто-пас в `Rules.apply_draw/3`.
+  Вызывается только когда сейчас очередь этого бота действовать.
   """
   @spec decide(Rules.projection()) :: Rules.decision()
   def decide(%{phase: :choosing_color, my_hand: hand}) do
     {:choose_color, Rules.auto_color(hand, &hd/1)}
   end
 
-  def decide(%{
-        phase: :playing,
-        my_hand: hand,
-        discard_top: top,
-        current_color: color,
-        pending: pending
-      }) do
+  def decide(%{phase: :playing, my_hand: hand, discard_top: top, current_color: color}) do
     case Enum.filter(hand, &Rules.playable?(&1, top, color)) do
-      [] -> if match?({:drew, _}, pending), do: :pass, else: :draw
+      [] -> :draw
       playable -> {:play, pick_card(playable)}
     end
   end
