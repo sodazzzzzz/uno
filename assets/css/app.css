@@ -457,29 +457,45 @@
   justify-content: center;
   gap: 28px;
 }
+/* колода — стопка карт рубашкой вверх (видно, что там лежат карты) */
 .uno-deck {
+  position: relative;
   width: 84px;
   height: 122px;
+  border: none;
   border-radius: 15px;
   display: grid;
   place-items: center;
-  background: #e9dcc5;
-  border: 2px dashed #c4b491;
-  color: var(--uno-muted);
   cursor: pointer;
-  font-family: var(--uno-display);
-  font-weight: 700;
-  font-size: 18px;
-  letter-spacing: 0.04em;
+  background: #36291b;
+  /* верхняя карта + 2 карты под ней (смещение вниз-вправо) = стопка */
+  box-shadow:
+    3px 3px 0 0 #2f2417,
+    6px 6px 0 0 #281e13,
+    6px 12px 20px rgba(60, 42, 20, 0.28);
   transition: transform 0.12s, box-shadow 0.15s;
+}
+.uno-deck__badge {
+  display: grid;
+  place-items: center;
+  width: 86px;
+  height: 38px;
+  transform: rotate(-20deg);
+  border-radius: 50%;
+  background: var(--uno-red);
+  color: #fff;
+  font-family: var(--uno-display);
+  font-weight: 800;
+  font-size: 16px;
+  letter-spacing: 0.02em;
+  box-shadow: 0 0 0 4px rgba(255, 255, 255, 0.1);
 }
 .uno-deck:hover:not(:disabled) {
   transform: translateY(-3px);
-  box-shadow: 0 12px 22px rgba(70, 52, 28, 0.2);
 }
 .uno-deck:disabled {
   cursor: default;
-  opacity: 0.75;
+  opacity: 0.82;
 }
 .uno-discard {
   width: 92px;
