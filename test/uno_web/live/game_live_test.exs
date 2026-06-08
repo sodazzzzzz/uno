@@ -117,6 +117,15 @@ defmodule UnoWeb.GameLiveTest do
 
       assert html =~ "Ходит Лео"
     end
+
+    test "крафтовый нечисловой index не роняет канал (находка ревью)", %{conn: conn} do
+      view = started(conn)
+
+      # Произвольный payload по сокету — игнорируется, стол остаётся живым.
+      html = render_click(view, "play", %{"index" => "не-число"})
+
+      assert html =~ "uno-hand"
+    end
   end
 
   defp server_players(code), do: length(Server.state(code).players)

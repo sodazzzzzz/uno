@@ -58,8 +58,12 @@ defmodule UnoWeb.GameLive do
   def handle_event("play", %{"index" => index}, socket) do
     %{code: code, player_id: player_id, view: view} = socket.assigns
 
-    card = Enum.at(view.my_hand, String.to_integer(index))
-    if card, do: Server.play(code, player_id, card)
+    # index приходит по сокету — может быть произвольным; не доверяем.
+    with {i, ""} <- Integer.parse(to_string(index)),
+         card when not is_nil(card) <- Enum.at(view.my_hand, i) do
+      Server.play(code, player_id, card)
+    end
+
     {:noreply, refresh(socket)}
   end
 
