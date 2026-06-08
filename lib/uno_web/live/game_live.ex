@@ -318,7 +318,7 @@ defmodule UnoWeb.GameLive do
 
       <section class="uno-center">
         <button class="uno-deck" phx-click="draw" disabled={not can_draw?(@view, @player_id)}>
-          <span>UNO</span>
+          <span class="uno-deck__badge">UNO</span>
         </button>
         <div class="uno-discard">
           <.card :if={@view.discard_top} card={@view.discard_top} />
