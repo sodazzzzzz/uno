@@ -280,14 +280,19 @@ defmodule Uno.Game.Rules do
   @doc """
   Применяет ход «взять карту» игроком `player_id` в его ход.
 
-  Тянет 1 карту (с перетасовкой сброса при пустой колоде — `Deck.draw/4`). По §5
-  добор НЕ передаёт ход автоматически: добранную карту игрок волен сыграть сразу
-  (`apply_play/3`) или оставить и спасовать (`pass/2`), поэтому ход остаётся за
-  ним, и партия помечается `pending: {:drew, player_id}`. **Второй добор за ход
-  запрещён** (§5 «берёт 1 карту») — при уже стоящей метке `{:error, :already_drew}`.
-  Исключение: если тянуть нечего даже после перетасовки (колода и сброс
-  исчерпаны) — добора нет и ход просто переходит дальше (§5 «колода закончилась»),
-  метка не ставится.
+  Тянет 1 карту (с перетасовкой сброса при пустой колоде — `Deck.draw/4`). После
+  добора (§5):
+
+    * если в руке есть **играбельная** карта (включая добранную) — ход остаётся
+      за игроком: волен сыграть сразу (`apply_play/3`) или оставить и спасовать
+      (`pass/2`), партия помечается `pending: {:drew, player_id}`;
+    * если играбельной карты по-прежнему **нет** — это «выбор без выбора»,
+      поэтому ход сразу переходит дальше (авто-пас), метка не ставится.
+
+  **Второй добор за ход запрещён** (§5 «берёт 1 карту») — при уже стоящей метке
+  `{:error, :already_drew}`. Если тянуть нечего даже после перетасовки (колода и
+  сброс исчерпаны) — добора нет и ход просто переходит дальше (§5 «колода
+  закончилась»), метка не ставится.
 
   Проверяет фазу `:playing` и что сейчас ход игрока; иначе `{:error, reason}`.
   `shuffler` инъектируется для детерминизма (по умолчанию `Deck.shuffle/1`).
@@ -311,9 +316,18 @@ defmodule Uno.Game.Rules do
       # Колода исчерпана — добора нет, ход переходит дальше.
       {:ok, %{base | current_player: next_player(state), pending: nil}}
     else
-      # Карта добрана, ход остаётся за игроком; помечаем, что добор уже был.
       hand = Map.get(state.hands, player_id, []) ++ drawn
-      {:ok, %{base | hands: Map.put(state.hands, player_id, hand), pending: {:drew, player_id}}}
+      drawn_state = %{base | hands: Map.put(state.hands, player_id, hand)}
+
+      if has_playable?(drawn_state, player_id) do
+        # Появилась/есть играбельная карта — оставляем выбор игроку (сыграть
+        # добранную/иную или спасовать); помечаем, что добор уже был.
+        {:ok, %{drawn_state | pending: {:drew, player_id}}}
+      else
+        # Играбельной карты по-прежнему нет — выбор без выбора, авто-пас (§5):
+        # ход сразу переходит дальше, шаг «Пас» не нужен.
+        {:ok, %{drawn_state | current_player: next_player(state), pending: nil}}
+      end
     end
   end
 
@@ -481,7 +495,7 @@ defmodule Uno.Game.Rules do
       {:ok, drawn} ->
         case pass(drawn, player_id) do
           {:ok, passed} -> {:ok, passed}
-          # Колода была пуста: apply_draw уже передал ход, пасовать нечем.
+          # apply_draw уже передал ход (пустая колода или авто-пас) — пасовать нечем.
           {:error, _reason} -> {:ok, drawn}
         end
 
@@ -523,6 +537,15 @@ defmodule Uno.Game.Rules do
 
   defp check_playable(%State{discard_pile: [top | _], current_color: color}, card) do
     if playable?(card, top, color), do: :ok, else: {:error, :illegal_card}
+  end
+
+  # Есть ли у игрока хотя бы одна играбельная карта (по верху сброса и активному
+  # цвету) — для авто-паса после бесполезного добора.
+  defp has_playable?(
+         %State{discard_pile: [top | _], current_color: color, hands: hands},
+         player_id
+       ) do
+    Enum.any?(Map.get(hands, player_id, []), &playable?(&1, top, color))
   end
 
   defp do_apply_play(state, player_id, card, shuffler) do

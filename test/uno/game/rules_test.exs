@@ -442,13 +442,15 @@ defmodule Uno.Game.RulesTest do
         three_player_state(%{
           hands: %{"p1" => [], "p2" => [], "p3" => []},
           draw_pile: [],
-          discard_pile: [num(:red, 5), num(:blue, 2), num(:green, 3)]
+          discard_pile: [num(:blue, 5), num(:blue, 2), num(:green, 3)],
+          current_color: :blue
         })
 
       {:ok, s} = Rules.apply_draw(state, "p1", @identity)
 
+      # Добрал blue2 — ложится на синий → ход остаётся за p1 ({:drew}).
       assert s.hands["p1"] == [num(:blue, 2)]
-      assert s.discard_pile == [num(:red, 5)]
+      assert s.discard_pile == [num(:blue, 5)]
       assert s.draw_pile == [num(:green, 3)]
       assert s.current_player == "p1"
     end
@@ -480,6 +482,40 @@ defmodule Uno.Game.RulesTest do
       assert s.current_player == "p1"
 
       assert Rules.apply_draw(s, "p1", @identity) == {:error, :already_drew}
+    end
+
+    test "добор без играбельной карты — авто-пас (ход переходит, метки нет)" do
+      state =
+        three_player_state(%{
+          hands: %{"p1" => [num(:blue, 9)], "p2" => [], "p3" => []},
+          draw_pile: [num(:blue, 8)],
+          discard_pile: [num(:red, 5)],
+          current_color: :red
+        })
+
+      {:ok, s} = Rules.apply_draw(state, "p1", @identity)
+
+      # blue9 и добранная blue8 не ложатся на красный/5 → выбора нет → авто-пас.
+      assert s.hands["p1"] == [num(:blue, 9), num(:blue, 8)]
+      assert s.pending == nil
+      assert s.current_player == "p2"
+    end
+
+    test "добор играбельной карты — остаётся выбор ({:drew})" do
+      state =
+        three_player_state(%{
+          hands: %{"p1" => [num(:blue, 9)], "p2" => [], "p3" => []},
+          draw_pile: [num(:red, 8)],
+          discard_pile: [num(:red, 5)],
+          current_color: :red
+        })
+
+      {:ok, s} = Rules.apply_draw(state, "p1", @identity)
+
+      # Добрал red8 — ложится на красный → ход остаётся, можно сыграть/спасовать.
+      assert s.hands["p1"] == [num(:blue, 9), num(:red, 8)]
+      assert s.pending == {:drew, "p1"}
+      assert s.current_player == "p1"
     end
   end
 
@@ -735,11 +771,14 @@ defmodule Uno.Game.RulesTest do
       state =
         three_player_state(%{
           hands: %{"p1" => [], "p2" => [], "p3" => []},
-          draw_pile: [num(:green, 1)]
+          draw_pile: [num(:green, 1)],
+          discard_pile: [num(:green, 5)],
+          current_color: :green
         })
 
       {:ok, s} = Rules.apply_decision(state, "p1", :draw, @identity)
 
+      # Добрал green1 — ложится на зелёный → остаётся выбор ({:drew}).
       assert s.hands["p1"] == [num(:green, 1)]
       assert s.pending == {:drew, "p1"}
     end
