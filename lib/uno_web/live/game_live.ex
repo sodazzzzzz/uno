@@ -291,7 +291,7 @@ defmodule UnoWeb.GameLive do
         <.link navigate={~p"/"} class="uno-table__exit">выход</.link>
       </header>
 
-      <section class="uno-opponents">
+      <section class={["uno-opponents", length(@view.others) >= 3 && "uno-opponents--arc"]}>
         <div
           :for={opp <- @view.others}
           class={["uno-pod", opp.id == @view.whose_turn && "is-active"]}
@@ -330,25 +330,6 @@ defmodule UnoWeb.GameLive do
         </div>
       </section>
 
-      <div class="uno-you">
-        <div class="uno-avwrap">
-          <div
-            :if={@view.whose_turn == @player_id and @view.turn_deadline}
-            id="ring-me"
-            class="uno-ring"
-            phx-hook=".TurnTimer"
-            data-deadline={@view.turn_deadline}
-            data-duration={@view.turn_ms}
-          >
-          </div>
-          <div class="uno-you__avatar">{avatar(name_of(@view, @player_id))}</div>
-        </div>
-        <div class="uno-you__meta">
-          <span class="uno-you__name">{name_of(@view, @player_id)}</span>
-          <span class="uno-you__count">{length(@view.my_hand)} карт</span>
-        </div>
-      </div>
-
       <section class="uno-hand">
         <button
           :for={{card, i} <- Enum.with_index(@view.my_hand)}
@@ -363,9 +344,33 @@ defmodule UnoWeb.GameLive do
         <p :if={@view.my_hand == []} class="uno-hand__empty">— рука пуста —</p>
       </section>
 
-      <div :if={drew?(@view, @player_id)} class="uno-floataction">
-        <button phx-click="pass" class="uno-btn uno-btn--primary">Пас</button>
-      </div>
+      <footer class="uno-footer">
+        <div class="uno-you">
+          <div class="uno-avwrap">
+            <div
+              :if={@view.whose_turn == @player_id and @view.turn_deadline}
+              id="ring-me"
+              class="uno-ring"
+              phx-hook=".TurnTimer"
+              data-deadline={@view.turn_deadline}
+              data-duration={@view.turn_ms}
+            >
+            </div>
+            <div class="uno-you__avatar">{avatar(name_of(@view, @player_id))}</div>
+          </div>
+          <div class="uno-you__meta">
+            <span class="uno-you__name">{name_of(@view, @player_id)}</span>
+            <span class="uno-you__count">{length(@view.my_hand)} карт</span>
+          </div>
+        </div>
+        <button
+          :if={drew?(@view, @player_id)}
+          phx-click="pass"
+          class="uno-btn uno-btn--primary uno-footer__pass"
+        >
+          Пас
+        </button>
+      </footer>
     </main>
 
     <div :if={@view.phase == :choosing_color} class="uno-overlay">
