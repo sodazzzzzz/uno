@@ -315,6 +315,14 @@
   color: var(--uno-blue);
   background: rgba(58, 110, 168, 0.12);
 }
+.uno-tag--ready {
+  color: var(--uno-green);
+  background: rgba(63, 148, 105, 0.16);
+}
+.uno-tag--wait {
+  color: var(--uno-muted);
+  background: transparent;
+}
 .uno-room__hint {
   margin: 14px 0 0;
   color: var(--uno-muted);

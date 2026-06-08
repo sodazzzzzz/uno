@@ -193,6 +193,30 @@ defmodule Uno.Game.ServerTest do
     end
   end
 
+  describe "готовность (set_ready) и авто-старт" do
+    test "партия стартует, когда все реальные игроки готовы (бот всегда готов)" do
+      code = lobby([player("p1"), player("bot1", true)])
+      Phoenix.PubSub.subscribe(Uno.PubSub, Server.topic(code))
+
+      assert :ok = Server.set_ready(code, "p1", true)
+
+      assert_receive {:game_update, ^code}
+      assert Server.state(code).phase == :playing
+    end
+
+    test "пока не все реальные готовы — лобби; готовность ставится и снимается" do
+      code = lobby([player("p1"), player("p2")])
+
+      assert :ok = Server.set_ready(code, "p1", true)
+      state = Server.state(code)
+      assert state.phase == :lobby
+      assert "p1" in state.ready
+
+      assert :ok = Server.set_ready(code, "p1", false)
+      refute "p1" in Server.state(code).ready
+    end
+  end
+
   # Ждёт, пока ход дойдёт до игрока `id` (получая broadcast'ы шагов бота).
   defp await_current(code, id) do
     receive do

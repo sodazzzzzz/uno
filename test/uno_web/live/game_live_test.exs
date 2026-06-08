@@ -44,14 +44,30 @@ defmodule UnoWeb.GameLiveTest do
     assert server_players(code) == 2
   end
 
-  test "старт с двумя игроками переводит партию в игру", %{conn: conn} do
+  test "готовность реального игрока авто-стартует партию (бот всегда готов)", %{conn: conn} do
     code = room([player("me", "Алиса"), player("bot-1", "Лео", true)])
     conn = conn_as(conn, "me")
     {:ok, view, _html} = live(conn, ~p"/game/#{code}")
 
-    html = view |> element("button", "Начать партию") |> render_click()
+    # Жму «Готов» → все реальные готовы (я) + бот всегда готов → авто-старт.
+    html = view |> element("button", "Готов") |> render_click()
 
     assert html =~ "Партия идёт"
+  end
+
+  test "готовность можно отменить; пока не все готовы — партия не стартует", %{conn: conn} do
+    # Два реальных игрока: пока Боб не готов, моё «Готов» не стартует партию.
+    code = room([player("me", "Алиса"), player("bob", "Боб")])
+    conn = conn_as(conn, "me")
+    {:ok, view, _html} = live(conn, ~p"/game/#{code}")
+
+    html = view |> element("button", "Готов") |> render_click()
+    assert html =~ "Отменить готовность"
+    refute html =~ "Партия идёт"
+
+    html = view |> element("button", "Отменить готовность") |> render_click()
+    assert html =~ "Готов"
+    refute html =~ "Отменить готовность"
   end
 
   test "несуществующая комната редиректит в лобби", %{conn: conn} do

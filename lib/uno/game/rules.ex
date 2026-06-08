@@ -47,7 +47,7 @@ defmodule Uno.Game.Rules do
   """
   @type projection :: %{
           my_hand: [Deck.card()],
-          players: [%{id: State.player_id(), name: String.t(), is_bot: boolean}],
+          players: [%{id: State.player_id(), name: String.t(), is_bot: boolean, ready: boolean}],
           others: [%{id: State.player_id(), name: String.t(), card_count: non_neg_integer}],
           discard_top: Deck.card() | nil,
           current_color: Deck.color() | nil,
@@ -174,8 +174,10 @@ defmodule Uno.Game.Rules do
 
   # Публичный ростер партии (имена/боты, в порядке посадки) — без рук, для лобби
   # и отрисовки мест за столом.
-  defp roster(%State{players: players}) do
-    Enum.map(players, &%{id: &1.id, name: &1.name, is_bot: &1.is_bot})
+  defp roster(%State{players: players, ready: ready}) do
+    Enum.map(players, fn p ->
+      %{id: p.id, name: p.name, is_bot: p.is_bot, ready: p.is_bot or p.id in ready}
+    end)
   end
 
   defp others(%State{players: players, hands: hands}, player_id) do

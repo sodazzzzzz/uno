@@ -37,7 +37,8 @@ defmodule Uno.Game.StateTest do
           :pending,
           :turn_ref,
           :turn_deadline,
-          :winner
+          :winner,
+          :ready
         ])
 
       actual = %State{} |> Map.from_struct() |> Map.keys() |> MapSet.new()
@@ -107,6 +108,27 @@ defmodule Uno.Game.StateTest do
       assert next.phase == base.phase
       assert next.turn_ref == base.turn_ref
       assert next.direction == base.direction
+    end
+  end
+
+  describe "set_ready/3" do
+    setup do
+      %{state: State.new("ROOM", [%{id: "p1", name: "Алиса", is_bot: false}])}
+    end
+
+    test "отмечает игрока готовым (без дублей)", %{state: state} do
+      assert State.set_ready(state, "p1", true).ready == ["p1"]
+
+      assert state
+             |> State.set_ready("p1", true)
+             |> State.set_ready("p1", true)
+             |> Map.get(:ready) ==
+               ["p1"]
+    end
+
+    test "снимает готовность", %{state: state} do
+      ready = State.set_ready(state, "p1", true)
+      assert State.set_ready(ready, "p1", false).ready == []
     end
   end
 end

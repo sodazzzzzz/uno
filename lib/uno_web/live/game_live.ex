@@ -43,17 +43,12 @@ defmodule UnoWeb.GameLive do
     {:noreply, refresh(socket)}
   end
 
-  def handle_event("start", _params, socket) do
-    case Server.start_game(socket.assigns.code) do
-      :ok ->
-        {:noreply, refresh(socket)}
+  def handle_event("toggle_ready", _params, socket) do
+    %{code: code, player_id: player_id, view: view} = socket.assigns
 
-      {:error, :not_enough_players} ->
-        {:noreply, put_flash(socket, :error, "Нужно минимум 2 игрока")}
-
-      {:error, :already_started} ->
-        {:noreply, refresh(socket)}
-    end
+    # Партия стартует автоматически на стороне Server, когда все реальные готовы.
+    Server.set_ready(code, player_id, not my_ready?(view, player_id))
+    {:noreply, refresh(socket)}
   end
 
   defp refresh(socket) do
@@ -61,6 +56,13 @@ defmodule UnoWeb.GameLive do
   end
 
   defp member?(view, player_id), do: Enum.any?(view.players, &(&1.id == player_id))
+
+  defp my_ready?(view, player_id) do
+    case Enum.find(view.players, &(&1.id == player_id)) do
+      nil -> false
+      me -> me.ready
+    end
+  end
 
   defp bot_name(players) do
     taken = MapSet.new(players, & &1.name)
@@ -101,6 +103,12 @@ defmodule UnoWeb.GameLive do
               <span class="uno-player__name">{player.name}</span>
               <span :if={idx == 0} class="uno-tag">хост</span>
               <span :if={player.is_bot} class="uno-tag uno-tag--bot">бот</span>
+              <span :if={not player.is_bot and player.ready} class="uno-tag uno-tag--ready">
+                ✓ готов
+              </span>
+              <span :if={not player.is_bot and not player.ready} class="uno-tag uno-tag--wait">
+                ждём…
+              </span>
             </li>
           </ul>
 
@@ -113,16 +121,27 @@ defmodule UnoWeb.GameLive do
               + бот
             </button>
             <button
-              phx-click="start"
-              class="uno-btn uno-btn--primary"
-              disabled={length(@view.players) < 2}
+              :if={my_ready?(@view, @player_id)}
+              phx-click="toggle_ready"
+              class="uno-btn uno-btn--ghost"
             >
-              Начать партию
+              Отменить готовность
+            </button>
+            <button
+              :if={not my_ready?(@view, @player_id)}
+              phx-click="toggle_ready"
+              class="uno-btn uno-btn--primary"
+            >
+              Готов
             </button>
           </div>
 
           <p class="uno-room__hint">
-            2–4 игрока. Поделись кодом <strong>{@code}</strong>, чтобы позвать друзей.
+            <%= if length(@view.players) < 2 do %>
+              Нужно минимум 2 игрока — позови друга по коду <strong>{@code}</strong> или добавь бота.
+            <% else %>
+              Партия начнётся автоматически, когда все игроки нажмут «Готов».
+            <% end %>
           </p>
         <% else %>
           <h1 class="uno-room__logo">Партия идёт</h1>

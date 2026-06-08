@@ -223,9 +223,10 @@ defmodule Uno.Game.RulesTest do
 
       proj = Rules.project(state, "p1")
 
+      # Боты «готовы» всегда; реальный игрок не в ready-списке → ready: false.
       assert proj.players == [
-               %{id: "p1", name: "Алиса", is_bot: false},
-               %{id: "bot1", name: "Лео", is_bot: true}
+               %{id: "p1", name: "Алиса", is_bot: false, ready: false},
+               %{id: "bot1", name: "Лео", is_bot: true, ready: true}
              ]
     end
 
