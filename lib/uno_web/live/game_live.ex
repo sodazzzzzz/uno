@@ -83,7 +83,8 @@ defmodule UnoWeb.GameLive do
   end
 
   def handle_event("restart", _params, socket) do
-    # «Ещё раз» на экране победы — Server раздаёт новую партию тем же составом.
+    # «Ещё раз» — Server сбрасывает партию в комнату ожидания тем же составом;
+    # дальше новую партию запускает обычный ready-флоу.
     Server.restart(socket.assigns.code)
     {:noreply, refresh(socket)}
   end
