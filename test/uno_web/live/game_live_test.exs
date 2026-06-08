@@ -153,7 +153,7 @@ defmodule UnoWeb.GameLiveTest do
       assert html =~ "uno-hand"
     end
 
-    test "экран победы показывает «Ещё раз»; клик перезапускает партию", %{conn: conn} do
+    test "экран победы показывает «Ещё раз»; клик возвращает в комнату ожидания", %{conn: conn} do
       players = [player("me", "Алиса"), player("bot-1", "Лео", true)]
       code = finished_room(players, "me")
       conn = conn_as(conn, "me")
@@ -164,8 +164,9 @@ defmodule UnoWeb.GameLiveTest do
 
       html = view |> element("button", "Ещё раз") |> render_click()
 
-      # Новая партия: рендерится стол, экран победы исчез.
-      assert html =~ "uno-hand"
+      # Возврат в комнату ожидания (ready-флоу), экран победы исчез.
+      assert html =~ "Код комнаты"
+      assert html =~ "Готов"
       refute html =~ "победил"
     end
   end

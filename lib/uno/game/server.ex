@@ -103,9 +103,10 @@ defmodule Uno.Game.Server do
   def start_game(room_code), do: GenServer.call(via(room_code), :start_game)
 
   @doc """
-  Перезапускает завершённую партию: из фазы `:finished` раздаёт новую теми же
-  игроками (`Rules.deal/2` на свежей колоде) — «Ещё раз» на экране победы. Вне
-  `:finished` — `{:error, :not_finished}`.
+  Перезапуск завершённой партии через комнату ожидания: из фазы `:finished`
+  сбрасывает игру в `:lobby` тем же составом (`State.reset_to_lobby/1`) — «Ещё
+  раз» на экране победы. Дальше работает обычный ready-флоу: игроки снова жмут
+  «Готов», партия авто-стартует. Вне `:finished` — `{:error, :not_finished}`.
   """
   @spec restart(String.t()) :: :ok | {:error, :not_finished}
   def restart(room_code), do: GenServer.call(via(room_code), :restart)
@@ -180,7 +181,14 @@ defmodule Uno.Game.Server do
 
   def handle_call(:start_game, _from, %{game: game} = s), do: reply_with(start(game), s)
 
-  def handle_call(:restart, _from, %{game: game} = s), do: reply_with(restart_deal(game), s)
+  def handle_call(:restart, _from, %{game: %State{phase: :finished} = game} = s) do
+    # Возврат в комнату ожидания тем же составом; дальше — обычный ready-флоу.
+    new_game = State.reset_to_lobby(game)
+    broadcast(new_game)
+    {:reply, :ok, %{s | game: new_game}}
+  end
+
+  def handle_call(:restart, _from, s), do: {:reply, {:error, :not_finished}, s}
 
   def handle_call({:play, player_id, card}, _from, %{game: game} = s),
     do: reply_with(Rules.apply_play(game, player_id, card), s)
@@ -284,12 +292,6 @@ defmodule Uno.Game.Server do
 
   defp start(%State{phase: :lobby}), do: {:error, :not_enough_players}
   defp start(%State{}), do: {:error, :already_started}
-
-  # Переигровка из :finished — новая раздача тем же составом (логика — в Rules).
-  defp restart_deal(%State{phase: :finished} = game),
-    do: {:ok, Rules.deal(game, Deck.shuffle(Deck.new()))}
-
-  defp restart_deal(%State{}), do: {:error, :not_finished}
 
   # Применяет лобби-состояние: если все реальные готовы и игроков ≥ минимума —
   # раздаёт партию (commit: таймер + broadcast + автоход ботов); иначе просто

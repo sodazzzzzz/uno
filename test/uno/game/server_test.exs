@@ -232,7 +232,8 @@ defmodule Uno.Game.ServerTest do
   end
 
   describe "restart/1 — переигровка" do
-    # Засеваем готовую :finished-партию через опцию :game.
+    # Засеваем готовую :finished-партию через опцию :game (turn_ref ненулевой —
+    # проверяем его сохранение при сбросе).
     defp finished_room(players, winner) do
       code = unique_code()
 
@@ -240,9 +241,10 @@ defmodule Uno.Game.ServerTest do
         room_code: code,
         phase: :finished,
         players: players,
-        hands: Map.new(players, &{&1.id, []}),
+        hands: Map.new(players, &{&1.id, [num(:red, 1)]}),
         discard_pile: [num(:red, 5)],
         current_color: :red,
+        turn_ref: 7,
         winner: winner
       }
 
@@ -251,7 +253,7 @@ defmodule Uno.Game.ServerTest do
       code
     end
 
-    test "из :finished раздаёт новую партию тем же составом и шлёт broadcast" do
+    test "из :finished сбрасывает в комнату ожидания тем же составом и шлёт broadcast" do
       players = [player("p1"), player("p2")]
       code = finished_room(players, "p1")
       Phoenix.PubSub.subscribe(Uno.PubSub, Server.topic(code))
@@ -260,11 +262,15 @@ defmodule Uno.Game.ServerTest do
 
       assert_receive {:game_update, ^code}
       state = Server.state(code)
-      assert state.phase == :playing
+      assert state.phase == :lobby
+      assert state.players == players
       assert state.winner == nil
-      assert length(state.hands["p1"]) == 7
-      assert length(state.hands["p2"]) == 7
-      assert state.current_player == "p1"
+      assert state.ready == []
+      assert state.hands == %{"p1" => [], "p2" => []}
+      assert state.discard_pile == []
+
+      # turn_ref сохранён монотонным (§4.3) — протухшие таймауты не совпадут.
+      assert state.turn_ref == 7
     end
 
     test "вне :finished — без изменений ({:error, :not_finished})" do
