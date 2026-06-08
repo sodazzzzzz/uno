@@ -122,4 +122,16 @@ defmodule Uno.Game.State do
 
   def set_ready(%__MODULE__{} = state, player_id, false),
     do: %{state | ready: List.delete(state.ready, player_id)}
+
+  @doc """
+  Сбрасывает партию обратно в `:lobby` тем же составом (для «Ещё раз» — рестарт
+  через комнату ожидания): свежие пустые руки, очищенные сброс/колода/готовность/
+  победитель/pending. Сохраняется только `room_code`, `players` и **`turn_ref`**:
+  счётчик хода остаётся монотонным, поэтому протухшие таймауты/ход-ботов прошлой
+  партии не могут совпасть с новым `turn_ref` (§4.3).
+  """
+  @spec reset_to_lobby(t) :: t
+  def reset_to_lobby(%__MODULE__{room_code: code, players: players, turn_ref: turn_ref}) do
+    %{new(code, players) | turn_ref: turn_ref}
+  end
 end

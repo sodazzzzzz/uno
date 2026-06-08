@@ -720,8 +720,10 @@
   font-size: 54px;
   line-height: 1;
 }
-.uno-overlay__card--win .uno-btn {
-  margin-top: 14px;
+.uno-overlay__actions {
+  display: flex;
+  gap: 10px;
+  margin-top: 16px;
 }
 .uno-colors {
   display: flex;

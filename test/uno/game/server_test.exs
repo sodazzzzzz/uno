@@ -1,10 +1,11 @@
 defmodule Uno.Game.ServerTest do
   use ExUnit.Case, async: true
 
-  alias Uno.Game.{Manager, Server}
+  alias Uno.Game.{Manager, Server, State}
 
   defp unique_code, do: "room-#{System.unique_integer([:positive])}"
   defp player(id, is_bot \\ false), do: %{id: id, name: id, is_bot: is_bot}
+  defp num(color, n), do: %{color: color, type: {:number, n}}
 
   # Партия в лобби с заданными игроками; гасится по завершении теста.
   # opts прокидываются в Server (напр. turn_ms для таймера).
@@ -227,6 +228,56 @@ defmodule Uno.Game.ServerTest do
 
       # Добор бота завершил готовность (хост готов, бот всегда) + 2 игрока → старт.
       assert Server.state(code).phase == :playing
+    end
+  end
+
+  describe "restart/1 — переигровка" do
+    # Засеваем готовую :finished-партию через опцию :game (turn_ref ненулевой —
+    # проверяем его сохранение при сбросе).
+    defp finished_room(players, winner) do
+      code = unique_code()
+
+      game = %State{
+        room_code: code,
+        phase: :finished,
+        players: players,
+        hands: Map.new(players, &{&1.id, [num(:red, 1)]}),
+        discard_pile: [num(:red, 5)],
+        current_color: :red,
+        turn_ref: 7,
+        winner: winner
+      }
+
+      {:ok, _pid} = Manager.create(code, players: players, game: game)
+      on_exit(fn -> Manager.stop(code) end)
+      code
+    end
+
+    test "из :finished сбрасывает в комнату ожидания тем же составом и шлёт broadcast" do
+      players = [player("p1"), player("p2")]
+      code = finished_room(players, "p1")
+      Phoenix.PubSub.subscribe(Uno.PubSub, Server.topic(code))
+
+      assert :ok = Server.restart(code)
+
+      assert_receive {:game_update, ^code}
+      state = Server.state(code)
+      assert state.phase == :lobby
+      assert state.players == players
+      assert state.winner == nil
+      assert state.ready == []
+      assert state.hands == %{"p1" => [], "p2" => []}
+      assert state.discard_pile == []
+
+      # turn_ref сохранён монотонным (§4.3) — протухшие таймауты не совпадут.
+      assert state.turn_ref == 7
+    end
+
+    test "вне :finished — без изменений ({:error, :not_finished})" do
+      code = lobby([player("p1"), player("p2")])
+
+      assert {:error, :not_finished} = Server.restart(code)
+      assert Server.state(code).phase == :lobby
     end
   end
 

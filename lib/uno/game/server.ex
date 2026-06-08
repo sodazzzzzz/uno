@@ -102,6 +102,15 @@ defmodule Uno.Game.Server do
   @spec start_game(String.t()) :: :ok | {:error, :not_enough_players | :already_started}
   def start_game(room_code), do: GenServer.call(via(room_code), :start_game)
 
+  @doc """
+  Перезапуск завершённой партии через комнату ожидания: из фазы `:finished`
+  сбрасывает игру в `:lobby` тем же составом (`State.reset_to_lobby/1`) — «Ещё
+  раз» на экране победы. Дальше работает обычный ready-флоу: игроки снова жмут
+  «Готов», партия авто-стартует. Вне `:finished` — `{:error, :not_finished}`.
+  """
+  @spec restart(String.t()) :: :ok | {:error, :not_finished}
+  def restart(room_code), do: GenServer.call(via(room_code), :restart)
+
   @doc "Игрок `player_id` играет карту `card`."
   @spec play(String.t(), State.player_id(), Deck.card()) :: :ok | {:error, Rules.reason()}
   def play(room_code, player_id, card),
@@ -129,7 +138,11 @@ defmodule Uno.Game.Server do
     players = Keyword.get(opts, :players, [])
     turn_ms = Keyword.get(opts, :turn_ms, @default_turn_ms)
     bot_delay = Keyword.get(opts, :bot_delay, @default_bot_delay)
-    {:ok, %{game: State.new(room_code, players), turn_ms: turn_ms, bot_delay: bot_delay}}
+
+    # :game позволяет засеять готовое состояние (тесты; в будущем — восстановление
+    # из персистентности). По умолчанию — свежее лобби.
+    game = Keyword.get(opts, :game) || State.new(room_code, players)
+    {:ok, %{game: game, turn_ms: turn_ms, bot_delay: bot_delay}}
   end
 
   @impl true
@@ -167,6 +180,15 @@ defmodule Uno.Game.Server do
   def handle_call({:set_ready, _player_id, _ready?}, _from, s), do: {:reply, :ok, s}
 
   def handle_call(:start_game, _from, %{game: game} = s), do: reply_with(start(game), s)
+
+  def handle_call(:restart, _from, %{game: %State{phase: :finished} = game} = s) do
+    # Возврат в комнату ожидания тем же составом; дальше — обычный ready-флоу.
+    new_game = State.reset_to_lobby(game)
+    broadcast(new_game)
+    {:reply, :ok, %{s | game: new_game}}
+  end
+
+  def handle_call(:restart, _from, s), do: {:reply, {:error, :not_finished}, s}
 
   def handle_call({:play, player_id, card}, _from, %{game: game} = s),
     do: reply_with(Rules.apply_play(game, player_id, card), s)

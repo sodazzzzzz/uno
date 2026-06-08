@@ -82,6 +82,13 @@ defmodule UnoWeb.GameLive do
     {:noreply, refresh(socket)}
   end
 
+  def handle_event("restart", _params, socket) do
+    # «Ещё раз» — Server сбрасывает партию в комнату ожидания тем же составом;
+    # дальше новую партию запускает обычный ready-флоу.
+    Server.restart(socket.assigns.code)
+    {:noreply, refresh(socket)}
+  end
+
   # --- Помощники ---
 
   defp refresh(socket) do
@@ -397,7 +404,10 @@ defmodule UnoWeb.GameLive do
       <div class="uno-overlay__card uno-overlay__card--win">
         <div class="uno-overlay__emoji">🎉</div>
         <h2 class="uno-overlay__title">{name_of(@view, @view.winner)} победил!</h2>
-        <.link navigate={~p"/"} class="uno-btn uno-btn--primary">В лобби</.link>
+        <div class="uno-overlay__actions">
+          <button phx-click="restart" class="uno-btn uno-btn--primary">Ещё раз</button>
+          <.link navigate={~p"/"} class="uno-btn uno-btn--ghost">В лобби</.link>
+        </div>
       </div>
     </div>
 
