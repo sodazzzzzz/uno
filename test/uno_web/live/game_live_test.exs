@@ -52,7 +52,9 @@ defmodule UnoWeb.GameLiveTest do
     # Жму «Готов» → все реальные готовы (я) + бот всегда готов → авто-старт.
     html = view |> element("button", "Готов") |> render_click()
 
-    assert html =~ "Партия идёт"
+    # Раздача прошла, рендерится стол: ход первого игрока (меня).
+    assert html =~ "Ваш ход"
+    assert html =~ "uno-hand"
   end
 
   test "готовность можно отменить; пока не все готовы — партия не стартует", %{conn: conn} do
@@ -79,6 +81,51 @@ defmodule UnoWeb.GameLiveTest do
     code = room([player("other", "Кто-то")])
     conn = conn_as(conn, "p-stranger")
     assert {:error, {:live_redirect, %{to: "/"}}} = live(conn, ~p"/game/#{code}")
+  end
+
+  describe "игровой стол" do
+    # Доводит партию до :playing (я — первый, мой ход) и возвращает live view.
+    defp started(conn) do
+      code = room([player("me", "Алиса"), player("bot-1", "Лео", true)])
+      conn = conn_as(conn, "me")
+      {:ok, view, _html} = live(conn, ~p"/game/#{code}")
+      view |> element("button", "Готов") |> render_click()
+      view
+    end
+
+    test "после старта рендерится стол: рука, сброс, соперник", %{conn: conn} do
+      html = render(started(conn))
+
+      assert html =~ "uno-hand"
+      assert html =~ "uno-card"
+      assert html =~ "Лео"
+    end
+
+    test "клик по колоде добирает карту и показывает «Пас»", %{conn: conn} do
+      view = started(conn)
+
+      html = view |> element("button.uno-deck") |> render_click()
+
+      assert html =~ "Пас"
+    end
+
+    test "пас после добора передаёт ход следующему", %{conn: conn} do
+      view = started(conn)
+
+      view |> element("button.uno-deck") |> render_click()
+      html = view |> element("button", "Пас") |> render_click()
+
+      assert html =~ "Ходит Лео"
+    end
+
+    test "крафтовый нечисловой index не роняет канал (находка ревью)", %{conn: conn} do
+      view = started(conn)
+
+      # Произвольный payload по сокету — игнорируется, стол остаётся живым.
+      html = render_click(view, "play", %{"index" => "не-число"})
+
+      assert html =~ "uno-hand"
+    end
   end
 
   defp server_players(code), do: length(Server.state(code).players)
