@@ -724,3 +724,85 @@
 .uno-colorbtn--blue {
   background: var(--uno-blue);
 }
+
+/* timer ring (PR-UI-3) — --p (0..1) set by the .TurnTimer colocated hook */
+.uno-avwrap {
+  position: relative;
+}
+.uno-ring {
+  position: absolute;
+  inset: -6px;
+  border-radius: 50%;
+  pointer-events: none;
+  background: conic-gradient(
+    var(--uno-red) calc(var(--p, 1) * 360deg),
+    rgba(120, 90, 50, 0.16) 0
+  );
+  -webkit-mask: radial-gradient(farthest-side, transparent calc(100% - 4px), #000 0);
+  mask: radial-gradient(farthest-side, transparent calc(100% - 4px), #000 0);
+}
+
+/* "you" nameplate (bottom-left), carries the ring on your turn */
+.uno-you {
+  position: absolute;
+  left: 22px;
+  bottom: 26px;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.uno-you__avatar {
+  width: 52px;
+  height: 52px;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  font-weight: 700;
+  font-size: 19px;
+  color: var(--uno-paper);
+  background: var(--uno-red);
+  box-shadow: 0 5px 14px rgba(70, 52, 28, 0.25);
+}
+.uno-you__meta {
+  display: flex;
+  flex-direction: column;
+}
+.uno-you__name {
+  font-weight: 600;
+  font-size: 13px;
+}
+.uno-you__count {
+  font-size: 11px;
+  color: var(--uno-muted);
+}
+
+/* responsive: tighten the table on small screens */
+@media (max-width: 560px) {
+  .uno-opponents {
+    gap: 14px;
+  }
+  .uno-pod__avatar {
+    width: 48px;
+    height: 48px;
+    font-size: 18px;
+  }
+  .uno-center {
+    gap: 16px;
+  }
+  .uno-card,
+  .uno-deck,
+  .uno-discard {
+    transform: scale(0.86);
+  }
+  .uno-cardbtn {
+    margin-left: -40px;
+  }
+  .uno-you {
+    left: 12px;
+    bottom: 14px;
+  }
+  .uno-you__meta {
+    display: none;
+  }
+}

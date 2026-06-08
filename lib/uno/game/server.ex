@@ -135,8 +135,10 @@ defmodule Uno.Game.Server do
   @impl true
   def handle_call(:state, _from, %{game: game} = s), do: {:reply, game, s}
 
-  def handle_call({:project, player_id}, _from, %{game: game} = s) do
-    {:reply, Rules.project(game, player_id), s}
+  def handle_call({:project, player_id}, _from, %{game: game, turn_ms: turn_ms} = s) do
+    # Дополняем проекцию длительностью хода (процессный конфиг, не игровое
+    # состояние) — клиенту для отрисовки кольца-таймера от turn_deadline.
+    {:reply, Map.put(Rules.project(game, player_id), :turn_ms, turn_ms), s}
   end
 
   def handle_call({:add_player, player}, _from, %{game: game} = s) do
