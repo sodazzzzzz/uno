@@ -215,6 +215,19 @@ defmodule Uno.Game.ServerTest do
       assert :ok = Server.set_ready(code, "p1", false)
       refute "p1" in Server.state(code).ready
     end
+
+    test "готов соло-хост, затем добавлен бот → авто-старт (находка ревью)" do
+      code = lobby([player("p1")])
+
+      assert :ok = Server.set_ready(code, "p1", true)
+      # Один игрок < 2 — партия ещё в лобби.
+      assert Server.state(code).phase == :lobby
+
+      assert {:ok, _roster} = Server.add_player(code, player("bot1", true))
+
+      # Добор бота завершил готовность (хост готов, бот всегда) + 2 игрока → старт.
+      assert Server.state(code).phase == :playing
+    end
   end
 
   # Ждёт, пока ход дойдёт до игрока `id` (получая broadcast'ы шагов бота).

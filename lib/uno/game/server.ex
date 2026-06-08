@@ -144,9 +144,9 @@ defmodule Uno.Game.Server do
       :ok ->
         new_game = State.add_player(game, player)
 
-        # Уведомляем комнату ожидания, чтобы новый игрок/бот появился у всех.
-        broadcast(new_game)
-        {:reply, {:ok, new_game.players}, %{s | game: new_game}}
+        # settle_lobby и уведомит комнату, и авто-стартует, если добор игрока/бота
+        # завершил готовность.
+        {:reply, {:ok, new_game.players}, settle_lobby(s, new_game)}
 
       {:error, _reason} = error ->
         {:reply, error, s}
@@ -158,15 +158,7 @@ defmodule Uno.Game.Server do
         _from,
         %{game: %State{phase: :lobby} = game} = s
       ) do
-    game = State.set_ready(game, player_id, ready?)
-
-    if all_real_ready?(game) do
-      # Все реальные игроки готовы (и игроков ≥ минимума) — стартуем партию.
-      {:reply, :ok, commit(s, Rules.deal(game, Deck.shuffle(Deck.new())))}
-    else
-      broadcast(game)
-      {:reply, :ok, %{s | game: game}}
-    end
+    {:reply, :ok, settle_lobby(s, State.set_ready(game, player_id, ready?))}
   end
 
   # Вне лобби готовность не имеет смысла — игнорируем.
@@ -276,6 +268,19 @@ defmodule Uno.Game.Server do
 
   defp start(%State{phase: :lobby}), do: {:error, :not_enough_players}
   defp start(%State{}), do: {:error, :already_started}
+
+  # Применяет лобби-состояние: если все реальные готовы и игроков ≥ минимума —
+  # раздаёт партию (commit: таймер + broadcast + автоход ботов); иначе просто
+  # уведомляет комнату ожидания. Вызывается и из set_ready, и из add_player,
+  # чтобы добор игрока/бота, завершивший готовность, тоже стартовал партию.
+  defp settle_lobby(s, game) do
+    if all_real_ready?(game) do
+      commit(s, Rules.deal(game, Deck.shuffle(Deck.new())))
+    else
+      broadcast(game)
+      %{s | game: game}
+    end
+  end
 
   # Готовы ли все реальные игроки (боты всегда готовы) И игроков ≥ минимума —
   # условие авто-старта по «Готов».
