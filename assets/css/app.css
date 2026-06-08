@@ -332,3 +332,395 @@
   color: var(--uno-ink);
   letter-spacing: 0.1em;
 }
+
+/* ===================================================================
+   UNO — Warm Table game board (PR-UI-2).
+   =================================================================== */
+.uno-table {
+  position: relative;
+  min-height: 100dvh;
+  display: grid;
+  grid-template-rows: auto 1fr auto;
+  font-family: var(--uno-body);
+  color: var(--uno-ink);
+  background: radial-gradient(140% 100% at 50% -8%, #f7ecd8 0%, var(--uno-paper) 52%, #dbcbb0 100%);
+  overflow: hidden;
+}
+.uno-table::before {
+  content: "";
+  position: fixed;
+  left: 50%;
+  top: 48%;
+  width: 60vmin;
+  height: 60vmin;
+  transform: translate(-50%, -50%);
+  pointer-events: none;
+  border-radius: 50%;
+  background: radial-gradient(circle, rgba(216, 80, 63, 0.16), transparent 62%);
+  filter: blur(8px);
+}
+
+.uno-table__hud {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 16px 24px;
+  font-size: 14px;
+}
+.uno-table__room {
+  color: var(--uno-muted);
+}
+.uno-table__turn {
+  font-weight: 600;
+}
+.uno-table__exit {
+  margin-left: auto;
+  color: var(--uno-muted);
+  text-decoration: none;
+  font-size: 13px;
+}
+.uno-table__exit:hover {
+  color: var(--uno-ink);
+}
+
+/* opponents arc */
+.uno-opponents {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  justify-content: center;
+  align-items: flex-start;
+  gap: clamp(22px, 7vw, 88px);
+  padding-top: 4px;
+}
+.uno-pod {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 5px;
+}
+.uno-pod:nth-child(odd) {
+  transform: translateY(22px);
+}
+.uno-pod__avatar {
+  width: 58px;
+  height: 58px;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  font-weight: 700;
+  font-size: 21px;
+  color: var(--uno-paper);
+  background: var(--uno-red);
+  box-shadow: 0 5px 14px rgba(70, 52, 28, 0.25);
+  transition: box-shadow 0.2s;
+}
+.uno-pod.is-active .uno-pod__avatar {
+  box-shadow: 0 0 0 4px rgba(216, 80, 63, 0.45), 0 6px 16px rgba(70, 52, 28, 0.3);
+}
+.uno-pod__name {
+  font-weight: 600;
+  font-size: 13px;
+}
+.uno-pod.is-active .uno-pod__name {
+  color: var(--uno-red);
+}
+.uno-pod__count {
+  font-size: 11px;
+  color: var(--uno-muted);
+}
+.uno-pod__fan {
+  display: flex;
+  height: 26px;
+}
+.uno-back {
+  width: 18px;
+  height: 26px;
+  border-radius: 4px;
+  margin-left: -8px;
+  background: linear-gradient(150deg, #e3d6bf, #cbb997);
+  border: 1.5px solid #b6a382;
+}
+.uno-back:first-child {
+  margin-left: 0;
+}
+
+/* center: deck + discard + color */
+.uno-center {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 28px;
+}
+.uno-deck {
+  width: 84px;
+  height: 122px;
+  border-radius: 15px;
+  display: grid;
+  place-items: center;
+  background: #e9dcc5;
+  border: 2px dashed #c4b491;
+  color: var(--uno-muted);
+  cursor: pointer;
+  font-family: var(--uno-display);
+  font-weight: 700;
+  font-size: 18px;
+  letter-spacing: 0.04em;
+  transition: transform 0.12s, box-shadow 0.15s;
+}
+.uno-deck:hover:not(:disabled) {
+  transform: translateY(-3px);
+  box-shadow: 0 12px 22px rgba(70, 52, 28, 0.2);
+}
+.uno-deck:disabled {
+  cursor: default;
+  opacity: 0.75;
+}
+.uno-discard {
+  width: 92px;
+  height: 132px;
+  display: grid;
+  place-items: center;
+}
+.uno-colorchip {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+}
+.uno-dot {
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  background: var(--uno-muted);
+}
+.uno-dot--red {
+  background: var(--uno-red);
+  box-shadow: 0 0 0 5px rgba(216, 80, 63, 0.16);
+}
+.uno-dot--yellow {
+  background: var(--uno-yellow);
+  box-shadow: 0 0 0 5px rgba(227, 168, 41, 0.16);
+}
+.uno-dot--green {
+  background: var(--uno-green);
+  box-shadow: 0 0 0 5px rgba(63, 148, 105, 0.16);
+}
+.uno-dot--blue {
+  background: var(--uno-blue);
+  box-shadow: 0 0 0 5px rgba(58, 110, 168, 0.16);
+}
+.uno-colorchip small {
+  font-size: 9px;
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+  color: var(--uno-muted);
+}
+.uno-dir {
+  font-size: 20px;
+  color: var(--uno-muted);
+}
+
+/* CARD */
+.uno-card {
+  position: relative;
+  width: 84px;
+  height: 122px;
+  border-radius: 15px;
+  display: grid;
+  place-items: center;
+  background: var(--suit, #777);
+  box-shadow: 0 8px 18px rgba(60, 42, 20, 0.2);
+}
+.uno-card--red {
+  --suit: var(--uno-red);
+}
+.uno-card--yellow {
+  --suit: var(--uno-yellow);
+}
+.uno-card--green {
+  --suit: var(--uno-green);
+}
+.uno-card--blue {
+  --suit: var(--uno-blue);
+}
+.uno-card--wild {
+  background: #33291d;
+}
+.uno-card__big {
+  font-family: var(--uno-display);
+  font-weight: 800;
+  font-size: 48px;
+  color: #fff;
+}
+.uno-card--yellow .uno-card__big,
+.uno-card--yellow .uno-card__pip {
+  color: #3a2f10;
+}
+.uno-card__pip {
+  position: absolute;
+  font-family: var(--uno-display);
+  font-weight: 700;
+  font-size: 14px;
+  color: #fff;
+}
+.uno-card__pip--tl {
+  top: 8px;
+  left: 10px;
+}
+.uno-card__pip--br {
+  bottom: 8px;
+  right: 10px;
+  transform: rotate(180deg);
+}
+.uno-card__ico {
+  width: 50px;
+  height: 50px;
+  color: #fff;
+}
+.uno-card__ico--skip {
+  width: 42px;
+  height: 42px;
+}
+.uno-card__ico--rev {
+  width: 40px;
+  height: 40px;
+}
+.uno-card__plus {
+  font-family: var(--uno-display);
+  font-weight: 800;
+  font-size: 42px;
+  color: #fff;
+}
+.uno-card__corner4 {
+  position: absolute;
+  top: 8px;
+  left: 9px;
+  font-family: var(--uno-display);
+  font-weight: 800;
+  font-size: 14px;
+  color: #fff;
+}
+.uno-card__wheel {
+  width: 50px;
+  height: 50px;
+  border-radius: 50%;
+  background: conic-gradient(
+    var(--uno-red) 0 25%,
+    var(--uno-blue) 25% 50%,
+    var(--uno-green) 50% 75%,
+    var(--uno-yellow) 75% 100%
+  );
+  box-shadow: 0 0 0 3px #33291d;
+}
+
+/* hand — fan via per-card --i/--n */
+.uno-hand {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  justify-content: center;
+  align-items: flex-end;
+  padding: 0 24px 24px;
+  min-height: 150px;
+}
+.uno-cardbtn {
+  background: none;
+  border: 0;
+  padding: 0;
+  margin-left: -30px;
+  transform-origin: bottom center;
+  transform: rotate(calc((var(--i) - (var(--n) - 1) / 2) * 4deg));
+  transition: transform 0.16s ease;
+}
+.uno-cardbtn:first-child {
+  margin-left: 0;
+}
+.uno-cardbtn:not(.is-playable) {
+  filter: saturate(0.62) brightness(0.95);
+  cursor: default;
+}
+.uno-cardbtn.is-playable {
+  cursor: pointer;
+}
+.uno-cardbtn.is-playable:hover .uno-card {
+  transform: translateY(-22px) scale(1.05);
+  box-shadow: 0 0 0 2.5px var(--uno-ink), 0 16px 26px rgba(60, 42, 20, 0.3);
+}
+.uno-cardbtn.is-playable .uno-card {
+  transition: transform 0.16s ease, box-shadow 0.16s ease;
+}
+.uno-hand__empty {
+  color: var(--uno-muted);
+  font-style: italic;
+}
+
+.uno-floataction {
+  position: fixed;
+  bottom: 158px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 2;
+}
+
+/* overlays: choose color, winner */
+.uno-overlay {
+  position: fixed;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  background: rgba(42, 32, 23, 0.5);
+  backdrop-filter: blur(3px);
+  z-index: 50;
+}
+.uno-overlay__card {
+  background: var(--uno-paper);
+  border-radius: 22px;
+  padding: 30px 34px;
+  text-align: center;
+  box-shadow: 0 24px 60px rgba(0, 0, 0, 0.3);
+}
+.uno-overlay__title {
+  font-family: var(--uno-display);
+  font-weight: 700;
+  font-size: 22px;
+  margin: 0 0 18px;
+}
+.uno-overlay__emoji {
+  font-size: 54px;
+  line-height: 1;
+}
+.uno-overlay__card--win .uno-btn {
+  margin-top: 14px;
+}
+.uno-colors {
+  display: flex;
+  gap: 14px;
+}
+.uno-colorbtn {
+  width: 56px;
+  height: 56px;
+  border-radius: 16px;
+  border: 0;
+  cursor: pointer;
+  transition: transform 0.12s;
+}
+.uno-colorbtn:hover {
+  transform: scale(1.08);
+}
+.uno-colorbtn--red {
+  background: var(--uno-red);
+}
+.uno-colorbtn--yellow {
+  background: var(--uno-yellow);
+}
+.uno-colorbtn--green {
+  background: var(--uno-green);
+}
+.uno-colorbtn--blue {
+  background: var(--uno-blue);
+}
