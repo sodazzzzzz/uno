@@ -3,7 +3,7 @@ defmodule UnoWeb.GameLiveTest do
 
   import Phoenix.LiveViewTest
 
-  alias Uno.Game.{Manager, Server}
+  alias Uno.Game.{Manager, Server, State}
 
   defp unique_code, do: "T#{System.unique_integer([:positive])}"
   defp player(id, name, is_bot \\ false), do: %{id: id, name: name, is_bot: is_bot}
@@ -12,6 +12,25 @@ defmodule UnoWeb.GameLiveTest do
   defp room(players) do
     code = unique_code()
     {:ok, _pid} = Manager.create(code, players: players)
+    on_exit(fn -> Manager.stop(code) end)
+    code
+  end
+
+  # Комната с уже завершённой партией (экран победы) — засев через :game.
+  defp finished_room(players, winner) do
+    code = unique_code()
+
+    game = %State{
+      room_code: code,
+      phase: :finished,
+      players: players,
+      hands: Map.new(players, &{&1.id, []}),
+      discard_pile: [%{color: :red, type: {:number, 5}}],
+      current_color: :red,
+      winner: winner
+    }
+
+    {:ok, _pid} = Manager.create(code, players: players, game: game)
     on_exit(fn -> Manager.stop(code) end)
     code
   end
@@ -132,6 +151,22 @@ defmodule UnoWeb.GameLiveTest do
       html = render_click(view, "play", %{"index" => "не-число"})
 
       assert html =~ "uno-hand"
+    end
+
+    test "экран победы показывает «Ещё раз»; клик перезапускает партию", %{conn: conn} do
+      players = [player("me", "Алиса"), player("bot-1", "Лео", true)]
+      code = finished_room(players, "me")
+      conn = conn_as(conn, "me")
+      {:ok, view, html} = live(conn, ~p"/game/#{code}")
+
+      assert html =~ "Алиса победил"
+      assert html =~ "Ещё раз"
+
+      html = view |> element("button", "Ещё раз") |> render_click()
+
+      # Новая партия: рендерится стол, экран победы исчез.
+      assert html =~ "uno-hand"
+      refute html =~ "победил"
     end
   end
 

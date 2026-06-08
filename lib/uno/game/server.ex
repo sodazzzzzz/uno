@@ -102,6 +102,14 @@ defmodule Uno.Game.Server do
   @spec start_game(String.t()) :: :ok | {:error, :not_enough_players | :already_started}
   def start_game(room_code), do: GenServer.call(via(room_code), :start_game)
 
+  @doc """
+  Перезапускает завершённую партию: из фазы `:finished` раздаёт новую теми же
+  игроками (`Rules.deal/2` на свежей колоде) — «Ещё раз» на экране победы. Вне
+  `:finished` — `{:error, :not_finished}`.
+  """
+  @spec restart(String.t()) :: :ok | {:error, :not_finished}
+  def restart(room_code), do: GenServer.call(via(room_code), :restart)
+
   @doc "Игрок `player_id` играет карту `card`."
   @spec play(String.t(), State.player_id(), Deck.card()) :: :ok | {:error, Rules.reason()}
   def play(room_code, player_id, card),
@@ -129,7 +137,11 @@ defmodule Uno.Game.Server do
     players = Keyword.get(opts, :players, [])
     turn_ms = Keyword.get(opts, :turn_ms, @default_turn_ms)
     bot_delay = Keyword.get(opts, :bot_delay, @default_bot_delay)
-    {:ok, %{game: State.new(room_code, players), turn_ms: turn_ms, bot_delay: bot_delay}}
+
+    # :game позволяет засеять готовое состояние (тесты; в будущем — восстановление
+    # из персистентности). По умолчанию — свежее лобби.
+    game = Keyword.get(opts, :game) || State.new(room_code, players)
+    {:ok, %{game: game, turn_ms: turn_ms, bot_delay: bot_delay}}
   end
 
   @impl true
@@ -167,6 +179,8 @@ defmodule Uno.Game.Server do
   def handle_call({:set_ready, _player_id, _ready?}, _from, s), do: {:reply, :ok, s}
 
   def handle_call(:start_game, _from, %{game: game} = s), do: reply_with(start(game), s)
+
+  def handle_call(:restart, _from, %{game: game} = s), do: reply_with(restart_deal(game), s)
 
   def handle_call({:play, player_id, card}, _from, %{game: game} = s),
     do: reply_with(Rules.apply_play(game, player_id, card), s)
@@ -270,6 +284,12 @@ defmodule Uno.Game.Server do
 
   defp start(%State{phase: :lobby}), do: {:error, :not_enough_players}
   defp start(%State{}), do: {:error, :already_started}
+
+  # Переигровка из :finished — новая раздача тем же составом (логика — в Rules).
+  defp restart_deal(%State{phase: :finished} = game),
+    do: {:ok, Rules.deal(game, Deck.shuffle(Deck.new()))}
+
+  defp restart_deal(%State{}), do: {:error, :not_finished}
 
   # Применяет лобби-состояние: если все реальные готовы и игроков ≥ минимума —
   # раздаёт партию (commit: таймер + broadcast + автоход ботов); иначе просто
