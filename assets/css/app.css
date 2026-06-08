@@ -467,13 +467,15 @@
   display: grid;
   place-items: center;
   cursor: pointer;
+  /* клипуем повёрнутый овал-бейдж по скруглению карты (стопку-тени не трогает) */
+  overflow: hidden;
   background: #36291b;
   /* верхняя карта + 2 карты под ней (смещение вниз-вправо) = стопка */
   box-shadow:
     3px 3px 0 0 #2f2417,
     6px 6px 0 0 #281e13,
     6px 12px 20px rgba(60, 42, 20, 0.28);
-  transition: transform 0.12s, box-shadow 0.15s;
+  transition: transform 0.12s;
 }
 .uno-deck__badge {
   display: grid;
