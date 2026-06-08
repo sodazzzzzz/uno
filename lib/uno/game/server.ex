@@ -78,6 +78,15 @@ defmodule Uno.Game.Server do
           {:ok, [player]} | {:error, :game_started | :full | :already_joined}
   def add_player(room_code, player), do: GenServer.call(via(room_code), {:add_player, player})
 
+  @doc """
+  Отмечает реального игрока готовым/не готовым к старту (только в лобби). Когда
+  все реальные игроки готовы и игроков ≥#{@min_players}, партия стартует
+  автоматически (раздача). Боты «готовы» всегда.
+  """
+  @spec set_ready(String.t(), State.player_id(), boolean) :: :ok
+  def set_ready(room_code, player_id, ready?),
+    do: GenServer.call(via(room_code), {:set_ready, player_id, ready?})
+
   @doc "Адресный кортеж процесса партии в `Registry`."
   @spec via(String.t()) :: {:via, module, {module, String.t()}}
   def via(room_code), do: {:via, Registry, {Uno.Game.Registry, room_code}}
@@ -134,12 +143,26 @@ defmodule Uno.Game.Server do
     case validate_join(game, player) do
       :ok ->
         new_game = State.add_player(game, player)
-        {:reply, {:ok, new_game.players}, %{s | game: new_game}}
+
+        # settle_lobby и уведомит комнату, и авто-стартует, если добор игрока/бота
+        # завершил готовность.
+        {:reply, {:ok, new_game.players}, settle_lobby(s, new_game)}
 
       {:error, _reason} = error ->
         {:reply, error, s}
     end
   end
+
+  def handle_call(
+        {:set_ready, player_id, ready?},
+        _from,
+        %{game: %State{phase: :lobby} = game} = s
+      ) do
+    {:reply, :ok, settle_lobby(s, State.set_ready(game, player_id, ready?))}
+  end
+
+  # Вне лобби готовность не имеет смысла — игнорируем.
+  def handle_call({:set_ready, _player_id, _ready?}, _from, s), do: {:reply, :ok, s}
 
   def handle_call(:start_game, _from, %{game: game} = s), do: reply_with(start(game), s)
 
@@ -245,6 +268,25 @@ defmodule Uno.Game.Server do
 
   defp start(%State{phase: :lobby}), do: {:error, :not_enough_players}
   defp start(%State{}), do: {:error, :already_started}
+
+  # Применяет лобби-состояние: если все реальные готовы и игроков ≥ минимума —
+  # раздаёт партию (commit: таймер + broadcast + автоход ботов); иначе просто
+  # уведомляет комнату ожидания. Вызывается и из set_ready, и из add_player,
+  # чтобы добор игрока/бота, завершивший готовность, тоже стартовал партию.
+  defp settle_lobby(s, game) do
+    if all_real_ready?(game) do
+      commit(s, Rules.deal(game, Deck.shuffle(Deck.new())))
+    else
+      broadcast(game)
+      %{s | game: game}
+    end
+  end
+
+  # Готовы ли все реальные игроки (боты всегда готовы) И игроков ≥ минимума —
+  # условие авто-старта по «Готов».
+  defp all_real_ready?(%State{players: players, ready: ready}) do
+    length(players) >= @min_players and Enum.all?(players, &(&1.is_bot or &1.id in ready))
+  end
 
   defp broadcast(%State{room_code: room_code}) do
     Phoenix.PubSub.broadcast(Uno.PubSub, topic(room_code), {:game_update, room_code})

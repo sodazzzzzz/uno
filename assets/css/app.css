@@ -103,3 +103,232 @@
 [data-phx-session], [data-phx-teleported-src] { display: contents }
 
 /* This file is for your main application CSS */
+
+/* ===================================================================
+   UNO — Warm Table UI. Lobby + waiting room (PR-UI-1).
+   Игровой стол (карты, веер руки, кольцо-таймер) — следующий кусок UI.
+   =================================================================== */
+:root {
+  --uno-red: #d8503f;
+  --uno-yellow: #e3a829;
+  --uno-green: #3f9469;
+  --uno-blue: #3a6ea8;
+  --uno-paper: #efe3d0;
+  --uno-ink: #2a2017;
+  --uno-muted: #8a7c66;
+  --uno-display: "Baloo 2", system-ui, sans-serif;
+  --uno-body: "Inter", system-ui, sans-serif;
+}
+
+.uno-lobby,
+.uno-room {
+  min-height: 100dvh;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  font-family: var(--uno-body);
+  color: var(--uno-ink);
+  background: radial-gradient(140% 100% at 50% -10%, #f7ecd8 0%, var(--uno-paper) 50%, #ddccb2 100%);
+}
+
+/* grain overlay */
+.uno-lobby::before,
+.uno-room::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  opacity: 0.45;
+  mix-blend-mode: multiply;
+  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='200' height='200'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='0.8' numOctaves='2'/><feColorMatrix type='saturate' values='0'/></filter><rect width='100%25' height='100%25' filter='url(%23n)' opacity='0.5'/></svg>");
+}
+
+.uno-lobby__card,
+.uno-room__panel {
+  position: relative;
+  width: min(440px, 100%);
+  background: rgba(255, 255, 255, 0.5);
+  border: 1.5px solid rgba(120, 90, 50, 0.18);
+  border-radius: 22px;
+  padding: 34px 30px;
+  box-shadow: 0 24px 60px rgba(70, 52, 28, 0.16);
+  backdrop-filter: blur(2px);
+  text-align: center;
+}
+
+.uno-lobby__logo,
+.uno-room__logo {
+  margin: 0 0 6px;
+  font-family: var(--uno-display);
+  font-weight: 800;
+  font-size: 54px;
+  letter-spacing: 0.02em;
+  line-height: 1;
+  color: var(--uno-red);
+}
+
+.uno-lobby__tag {
+  margin: 0 0 22px;
+  color: var(--uno-muted);
+  font-size: 14px;
+}
+
+.uno-lobby__form {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.uno-input {
+  font: 500 16px var(--uno-body);
+  color: var(--uno-ink);
+  background: rgba(255, 255, 255, 0.7);
+  border: 1.5px solid rgba(120, 90, 50, 0.25);
+  border-radius: 12px;
+  padding: 13px 15px;
+  outline: none;
+  transition: border-color 0.15s, box-shadow 0.15s;
+}
+.uno-input::placeholder {
+  color: var(--uno-muted);
+}
+.uno-input:focus {
+  border-color: var(--uno-red);
+  box-shadow: 0 0 0 3px rgba(216, 80, 63, 0.15);
+}
+.uno-lobby__actions,
+.uno-room__actions {
+  display: flex;
+  gap: 10px;
+  margin-top: 6px;
+}
+
+.uno-btn {
+  flex: 1;
+  font: 600 15px var(--uno-body);
+  cursor: pointer;
+  border: 0;
+  border-radius: 12px;
+  padding: 13px 16px;
+  transition: transform 0.12s, box-shadow 0.15s, background 0.15s;
+}
+.uno-btn:active {
+  transform: translateY(1px);
+}
+.uno-btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+.uno-btn--primary {
+  background: var(--uno-red);
+  color: #fff;
+  box-shadow: 0 8px 18px rgba(216, 80, 63, 0.3);
+}
+.uno-btn--primary:hover:not(:disabled) {
+  background: #c8482f;
+}
+.uno-btn--ghost {
+  background: rgba(120, 90, 50, 0.1);
+  color: var(--uno-ink);
+}
+.uno-btn--ghost:hover:not(:disabled) {
+  background: rgba(120, 90, 50, 0.18);
+}
+
+/* waiting room */
+.uno-room__back {
+  position: absolute;
+  left: 20px;
+  top: 18px;
+  font-size: 13px;
+  color: var(--uno-muted);
+  text-decoration: none;
+}
+.uno-room__back:hover {
+  color: var(--uno-ink);
+}
+.uno-room__code {
+  margin: 4px 0 18px;
+}
+.uno-room__code span {
+  display: block;
+  font-size: 11px;
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+  color: var(--uno-muted);
+}
+.uno-room__code strong {
+  font-family: var(--uno-display);
+  font-weight: 700;
+  font-size: 34px;
+  letter-spacing: 0.18em;
+  color: var(--uno-ink);
+}
+
+.uno-room__players {
+  list-style: none;
+  margin: 0 0 18px;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.uno-player {
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  background: rgba(255, 255, 255, 0.55);
+  border: 1.5px solid rgba(120, 90, 50, 0.16);
+  border-radius: 14px;
+  padding: 9px 13px;
+  text-align: left;
+}
+.uno-player.is-me {
+  border-color: rgba(216, 80, 63, 0.5);
+}
+.uno-player__avatar {
+  flex: 0 0 auto;
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  font-family: var(--uno-body);
+  font-weight: 700;
+  color: var(--uno-paper);
+  background: var(--uno-red);
+}
+.uno-player__name {
+  flex: 1;
+  font-weight: 600;
+}
+.uno-tag {
+  font-size: 10px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--uno-muted);
+  background: rgba(120, 90, 50, 0.12);
+  border-radius: 999px;
+  padding: 3px 8px;
+}
+.uno-tag--bot {
+  color: var(--uno-blue);
+  background: rgba(58, 110, 168, 0.12);
+}
+.uno-tag--ready {
+  color: var(--uno-green);
+  background: rgba(63, 148, 105, 0.16);
+}
+.uno-tag--wait {
+  color: var(--uno-muted);
+  background: transparent;
+}
+.uno-room__hint {
+  margin: 14px 0 0;
+  color: var(--uno-muted);
+  font-size: 13px;
+}
+.uno-room__hint strong {
+  color: var(--uno-ink);
+  letter-spacing: 0.1em;
+}

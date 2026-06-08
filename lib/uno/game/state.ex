@@ -60,7 +60,8 @@ defmodule Uno.Game.State do
           pending: pending,
           turn_ref: non_neg_integer,
           turn_deadline: integer | nil,
-          winner: player_id | nil
+          winner: player_id | nil,
+          ready: [player_id]
         }
 
   defstruct room_code: nil,
@@ -75,7 +76,8 @@ defmodule Uno.Game.State do
             pending: nil,
             turn_ref: 0,
             turn_deadline: nil,
-            winner: nil
+            winner: nil,
+            ready: []
 
   @doc """
   Создаёт начальное состояние лобби для комнаты `room_code`.
@@ -108,4 +110,16 @@ defmodule Uno.Game.State do
         hands: Map.put_new(state.hands, id, [])
     }
   end
+
+  @doc """
+  Отмечает игрока готовым/не готовым к старту (лобби). Чистая операция над
+  данными, дубликаты не плодит. Готовность ботов отдельно не хранится — боты
+  «готовы» всегда (это учитывают проекция и `Game.Server`).
+  """
+  @spec set_ready(t, player_id, boolean) :: t
+  def set_ready(%__MODULE__{} = state, player_id, true),
+    do: %{state | ready: Enum.uniq([player_id | state.ready])}
+
+  def set_ready(%__MODULE__{} = state, player_id, false),
+    do: %{state | ready: List.delete(state.ready, player_id)}
 end

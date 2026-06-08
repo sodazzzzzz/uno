@@ -8,6 +8,7 @@ defmodule UnoWeb.Router do
     plug :put_root_layout, html: {UnoWeb.Layouts, :root}
     plug :protect_from_forgery
     plug :put_secure_browser_headers
+    plug UnoWeb.Plugs.PlayerSession
   end
 
   pipeline :api do
@@ -17,7 +18,8 @@ defmodule UnoWeb.Router do
   scope "/", UnoWeb do
     pipe_through :browser
 
-    get "/", PageController, :home
+    live "/", LobbyLive
+    live "/game/:code", GameLive
   end
 
   # Other scopes may use custom stacks.

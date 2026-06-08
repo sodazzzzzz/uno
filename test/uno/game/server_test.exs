@@ -68,6 +68,14 @@ defmodule Uno.Game.ServerTest do
   end
 
   describe "broadcast обновлений" do
+    test "вход игрока (add_player) шлёт broadcast — комната ожидания обновляется" do
+      code = lobby([player("p1")])
+      Phoenix.PubSub.subscribe(Uno.PubSub, Server.topic(code))
+
+      assert {:ok, _roster} = Server.add_player(code, player("p2"))
+      assert_receive {:game_update, ^code}
+    end
+
     test "успешные изменения шлют {:game_update, room_code} в топик партии" do
       code = lobby([player("p1"), player("p2")])
       Phoenix.PubSub.subscribe(Uno.PubSub, Server.topic(code))
@@ -182,6 +190,43 @@ defmodule Uno.Game.ServerTest do
       # Ходит человек — сервер сам ничего не двигает.
       refute_receive {:game_update, ^code}, 100
       assert Server.state(code).current_player == "human"
+    end
+  end
+
+  describe "готовность (set_ready) и авто-старт" do
+    test "партия стартует, когда все реальные игроки готовы (бот всегда готов)" do
+      code = lobby([player("p1"), player("bot1", true)])
+      Phoenix.PubSub.subscribe(Uno.PubSub, Server.topic(code))
+
+      assert :ok = Server.set_ready(code, "p1", true)
+
+      assert_receive {:game_update, ^code}
+      assert Server.state(code).phase == :playing
+    end
+
+    test "пока не все реальные готовы — лобби; готовность ставится и снимается" do
+      code = lobby([player("p1"), player("p2")])
+
+      assert :ok = Server.set_ready(code, "p1", true)
+      state = Server.state(code)
+      assert state.phase == :lobby
+      assert "p1" in state.ready
+
+      assert :ok = Server.set_ready(code, "p1", false)
+      refute "p1" in Server.state(code).ready
+    end
+
+    test "готов соло-хост, затем добавлен бот → авто-старт (находка ревью)" do
+      code = lobby([player("p1")])
+
+      assert :ok = Server.set_ready(code, "p1", true)
+      # Один игрок < 2 — партия ещё в лобби.
+      assert Server.state(code).phase == :lobby
+
+      assert {:ok, _roster} = Server.add_player(code, player("bot1", true))
+
+      # Добор бота завершил готовность (хост готов, бот всегда) + 2 игрока → старт.
+      assert Server.state(code).phase == :playing
     end
   end
 
