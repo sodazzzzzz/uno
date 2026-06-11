@@ -62,6 +62,17 @@ defmodule UnoWeb.GameLive do
     {:noreply, refresh(socket)}
   end
 
+  def handle_event("leave", _params, socket) do
+    %{code: code, player_id: player_id} = socket.assigns
+
+    # Сначала отписка: если мы — последний реальный игрок, комната погаснет и
+    # пришлёт прощальный broadcast; ловить его и проецировать мёртвый процесс
+    # уже не надо. Удаление мгновенное (без ожидания presence-grace).
+    Phoenix.PubSub.unsubscribe(Uno.PubSub, Server.topic(code))
+    Server.remove_player(code, player_id)
+    {:noreply, push_navigate(socket, to: ~p"/")}
+  end
+
   def handle_event("toggle_ready", _params, socket) do
     %{code: code, player_id: player_id, view: view} = socket.assigns
 
@@ -109,7 +120,15 @@ defmodule UnoWeb.GameLive do
   # --- Помощники ---
 
   defp refresh(socket) do
-    assign(socket, :view, Server.project(socket.assigns.code, socket.assigns.player_id))
+    # Комната могла погаснуть между broadcast'ом и нашей перерисовкой
+    # (последний реальный игрок вышел) — тогда просто уходим в лобби.
+    case Manager.find(socket.assigns.code) do
+      {:ok, _pid} ->
+        assign(socket, :view, Server.project(socket.assigns.code, socket.assigns.player_id))
+
+      :error ->
+        push_navigate(socket, to: ~p"/")
+    end
   end
 
   defp member?(view, player_id), do: Enum.any?(view.players, &(&1.id == player_id))
@@ -259,7 +278,7 @@ defmodule UnoWeb.GameLive do
     ~H"""
     <main class="uno-room">
       <div class="uno-room__panel">
-        <.link navigate={~p"/"} class="uno-room__back">← выход</.link>
+        <button phx-click="leave" class="uno-room__back">← выход</button>
         <h1 class="uno-room__logo">UNO</h1>
 
         <div class="uno-room__code">

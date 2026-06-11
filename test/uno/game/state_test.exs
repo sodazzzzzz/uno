@@ -111,6 +111,32 @@ defmodule Uno.Game.StateTest do
     end
   end
 
+  describe "remove_player/2" do
+    test "убирает игрока из players, его руку и готовность" do
+      state =
+        "ROOM"
+        |> State.new()
+        |> State.add_player(%{id: "p1", name: "Алиса", is_bot: false})
+        |> State.add_player(%{id: "p2", name: "Боб", is_bot: false})
+        |> State.set_ready("p1", true)
+        |> State.set_ready("p2", true)
+        |> State.remove_player("p1")
+
+      assert Enum.map(state.players, & &1.id) == ["p2"]
+      assert state.hands == %{"p2" => []}
+      assert state.ready == ["p2"]
+    end
+
+    test "неизвестный id — no-op" do
+      base =
+        "ROOM"
+        |> State.new()
+        |> State.add_player(%{id: "p1", name: "Алиса", is_bot: false})
+
+      assert State.remove_player(base, "ghost") == base
+    end
+  end
+
   describe "set_ready/3" do
     setup do
       %{state: State.new("ROOM", [%{id: "p1", name: "Алиса", is_bot: false}])}

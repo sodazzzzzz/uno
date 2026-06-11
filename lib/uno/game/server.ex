@@ -45,6 +45,7 @@ defmodule Uno.Game.Server do
   @min_players 2
   @default_turn_ms :timer.seconds(30)
   @default_bot_delay 800
+  @default_leave_grace_ms :timer.seconds(5)
 
   @typedoc "Игрок, как его принимает лобби."
   @type player :: %{id: State.player_id(), name: String.t(), is_bot: boolean}
@@ -86,6 +87,44 @@ defmodule Uno.Game.Server do
   @spec set_ready(String.t(), State.player_id(), boolean) :: :ok
   def set_ready(room_code, player_id, ready?),
     do: GenServer.call(via(room_code), {:set_ready, player_id, ready?})
+
+  @doc """
+  Убирает игрока из комнаты ожидания (кнопка «выход»). Только в фазе `:lobby` —
+  во время партии место и рука держатся до конца (`{:error, :game_started}`).
+
+  Если после удаления в комнате не осталось реальных игроков, процесс партии
+  останавливается штатно (комната гаснет). Удаление неготового игрока может
+  завершить готовность оставшихся — тогда партия авто-стартует (`settle_lobby`).
+  """
+  @spec remove_player(String.t(), State.player_id()) :: :ok | {:error, :game_started}
+  def remove_player(room_code, player_id),
+    do: GenServer.call(via(room_code), {:remove_player, player_id})
+
+  @doc """
+  Уведомление от web-слоя: игрок потерял подключение (закрыл все вкладки).
+
+  В лобби взводит grace-таймер удаления (`:leave_grace_ms`, по умолчанию
+  #{div(@default_leave_grace_ms, 1000)} с): случайный F5 успевает вернуться и не
+  выкидывает из комнаты. Во время партии удаления нет — таймер перевзводится и
+  вычистит «мёртвую душу», только если партия вернётся в комнату ожидания
+  («Ещё раз»). Несуществующая комната — no-op (комната могла уже погаснуть).
+  """
+  @spec player_left(String.t(), State.player_id()) :: :ok
+  def player_left(room_code, player_id), do: notify(room_code, {:player_left, player_id})
+
+  @doc "Уведомление от web-слоя: игрок снова подключился — гасит grace-таймер удаления."
+  @spec player_returned(String.t(), State.player_id()) :: :ok
+  def player_returned(room_code, player_id),
+    do: notify(room_code, {:player_returned, player_id})
+
+  # cast по pid через lookup: уведомления о подключениях не должны падать, если
+  # комната уже погасла (cast на мёртвый pid безвреден, в отличие от via-имени).
+  defp notify(room_code, message) do
+    case Registry.lookup(Uno.Game.Registry, room_code) do
+      [{pid, _value}] -> GenServer.cast(pid, message)
+      [] -> :ok
+    end
+  end
 
   @doc "Адресный кортеж процесса партии в `Registry`."
   @spec via(String.t()) :: {:via, module, {module, String.t()}}
@@ -138,11 +177,20 @@ defmodule Uno.Game.Server do
     players = Keyword.get(opts, :players, [])
     turn_ms = Keyword.get(opts, :turn_ms, @default_turn_ms)
     bot_delay = Keyword.get(opts, :bot_delay, @default_bot_delay)
+    leave_grace_ms = Keyword.get(opts, :leave_grace_ms, @default_leave_grace_ms)
 
     # :game позволяет засеять готовое состояние (тесты; в будущем — восстановление
     # из персистентности). По умолчанию — свежее лобби.
     game = Keyword.get(opts, :game) || State.new(room_code, players)
-    {:ok, %{game: game, turn_ms: turn_ms, bot_delay: bot_delay}}
+
+    {:ok,
+     %{
+       game: game,
+       turn_ms: turn_ms,
+       bot_delay: bot_delay,
+       leave_grace_ms: leave_grace_ms,
+       leave_timers: %{}
+     }}
   end
 
   @impl true
@@ -179,6 +227,21 @@ defmodule Uno.Game.Server do
   # Вне лобби готовность не имеет смысла — игнорируем.
   def handle_call({:set_ready, _player_id, _ready?}, _from, s), do: {:reply, :ok, s}
 
+  def handle_call(
+        {:remove_player, player_id},
+        _from,
+        %{game: %State{phase: :lobby}} = s
+      ) do
+    case remove_and_settle(s, player_id) do
+      {:cont, new_s} -> {:reply, :ok, new_s}
+      {:stop, new_s} -> {:stop, :normal, :ok, new_s}
+    end
+  end
+
+  # Во время партии место и рука держатся до конца — удаления нет.
+  def handle_call({:remove_player, _player_id}, _from, s),
+    do: {:reply, {:error, :game_started}, s}
+
   def handle_call(:start_game, _from, %{game: game} = s), do: reply_with(start(game), s)
 
   def handle_call(:restart, _from, %{game: %State{phase: :finished} = game} = s) do
@@ -201,6 +264,21 @@ defmodule Uno.Game.Server do
 
   def handle_call({:choose_color, player_id, color}, _from, %{game: game} = s),
     do: reply_with(Rules.choose_color(game, player_id, color), s)
+
+  # Отвал/возврат игрока (уведомления web-слоя). Таймер взводится только для
+  # реального игрока, сидящего в партии; возврат гасит его (ref протухает).
+  @impl true
+  def handle_cast({:player_left, player_id}, %{game: game} = s) do
+    if real_member?(game, player_id) do
+      {:noreply, arm_leave(s, player_id)}
+    else
+      {:noreply, s}
+    end
+  end
+
+  def handle_cast({:player_returned, player_id}, s) do
+    {:noreply, %{s | leave_timers: Map.delete(s.leave_timers, player_id)}}
+  end
 
   # turn_ref-схема (§4.3): сообщение матчится только если его ref совпадает с
   # текущим `turn_ref` игры (одна и та же переменная `ref` в обоих местах).
@@ -237,6 +315,26 @@ defmodule Uno.Game.Server do
 
   # Устаревший бот-ход (ход уже сменился) — игнорируем.
   def handle_info({:bot_move, _stale_ref}, s), do: {:noreply, s}
+
+  # Grace-таймер отвала истёк — та же ref-схема, что у таймера хода (§4.3):
+  # несовпадение ref значит, что игрок вернулся (или таймер перевзведён) —
+  # протухшее сообщение безвредно. Удаляем только в `:lobby`; во время партии
+  # перевзводимся и дочистим после возврата в комнату ожидания («Ещё раз»).
+  def handle_info({:offline_remove, player_id, ref}, %{leave_timers: timers} = s) do
+    cond do
+      Map.get(timers, player_id) != ref ->
+        {:noreply, s}
+
+      s.game.phase != :lobby ->
+        {:noreply, arm_leave(s, player_id)}
+
+      true ->
+        case remove_and_settle(s, player_id) do
+          {:cont, new_s} -> {:noreply, new_s}
+          {:stop, new_s} -> {:stop, :normal, new_s}
+        end
+    end
+  end
 
   # На успех правила — применяем состояние (перевзвод таймера + broadcast); на
   # отказ — состояние не трогаем, возвращаем ошибку вызывающему.
@@ -292,6 +390,33 @@ defmodule Uno.Game.Server do
 
   defp start(%State{phase: :lobby}), do: {:error, :not_enough_players}
   defp start(%State{}), do: {:error, :already_started}
+
+  # Взводит grace-таймер удаления отвалившегося игрока (свежий make_ref/0
+  # протухает все ранее запланированные сообщения по этому игроку).
+  defp arm_leave(s, player_id) do
+    ref = make_ref()
+    Process.send_after(self(), {:offline_remove, player_id, ref}, s.leave_grace_ms)
+    %{s | leave_timers: Map.put(s.leave_timers, player_id, ref)}
+  end
+
+  # Реальный (не бот) игрок, сидящий в партии?
+  defp real_member?(%State{players: players}, player_id),
+    do: Enum.any?(players, &(&1.id == player_id and not &1.is_bot))
+
+  # Убирает игрока из лобби. Остались реальные — обычный settle_lobby (вдруг
+  # удаление неготового завершило готовность); не остались — комната никому не
+  # нужна, сигнализируем вызывающему остановить процесс штатно.
+  defp remove_and_settle(s, player_id) do
+    game = State.remove_player(s.game, player_id)
+    s = %{s | leave_timers: Map.delete(s.leave_timers, player_id)}
+
+    if Enum.any?(game.players, &(not &1.is_bot)) do
+      {:cont, settle_lobby(s, game)}
+    else
+      broadcast(game)
+      {:stop, %{s | game: game}}
+    end
+  end
 
   # Применяет лобби-состояние: если все реальные готовы и игроков ≥ минимума —
   # раздаёт партию (commit: таймер + broadcast + автоход ботов); иначе просто

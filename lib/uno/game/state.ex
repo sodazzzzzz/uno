@@ -112,6 +112,23 @@ defmodule Uno.Game.State do
   end
 
   @doc """
+  Убирает игрока из партии: из `players`, его руку из `hands` и его готовность
+  из `ready`.
+
+  Чистая операция над данными: не проверяет фазу — контроль «можно ли выйти»
+  (только `:lobby`) — забота вызывающего (`Server`). Неизвестный `id` — no-op.
+  """
+  @spec remove_player(t, player_id) :: t
+  def remove_player(%__MODULE__{} = state, player_id) do
+    %{
+      state
+      | players: Enum.reject(state.players, &(&1.id == player_id)),
+        hands: Map.delete(state.hands, player_id),
+        ready: List.delete(state.ready, player_id)
+    }
+  end
+
+  @doc """
   Отмечает игрока готовым/не готовым к старту (лобби). Чистая операция над
   данными, дубликаты не плодит. Готовность ботов отдельно не хранится — боты
   «готовы» всегда (это учитывают проекция и `Game.Server`).
