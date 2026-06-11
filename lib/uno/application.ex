@@ -11,6 +11,8 @@ defmodule Uno.Application do
       UnoWeb.Telemetry,
       {DNSCluster, query: Application.get_env(:uno, :dns_cluster_query) || :ignore},
       {Phoenix.PubSub, name: Uno.PubSub},
+      # Кто из игроков сейчас подключён (нужен запущенный PubSub).
+      UnoWeb.Presence,
       # Адресация партий по room_code и по процессу на партию.
       {Registry, keys: :unique, name: Uno.Game.Registry},
       {DynamicSupervisor, name: Uno.Game.Supervisor, strategy: :one_for_one},

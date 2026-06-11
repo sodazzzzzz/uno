@@ -11,6 +11,7 @@ defmodule UnoWeb.GameLive do
   use UnoWeb, :live_view
 
   alias Uno.Game.{Manager, Rules, Server}
+  alias UnoWeb.Presence
 
   @bot_names ~w(Лео Ада Рекс Кай Ника Макс Юна Тимо)
 
@@ -21,8 +22,18 @@ defmodule UnoWeb.GameLive do
     with {:ok, _pid} <- Manager.find(code),
          view = Server.project(code, player_id),
          true <- member?(view, player_id) do
-      if connected?(socket), do: Phoenix.PubSub.subscribe(Uno.PubSub, Server.topic(code))
-      {:ok, assign(socket, code: code, player_id: player_id, view: view)}
+      if connected?(socket) do
+        Phoenix.PubSub.subscribe(Uno.PubSub, Server.topic(code))
+        {:ok, _ref} = Presence.track(self(), Server.topic(code), player_id, %{})
+      end
+
+      {:ok,
+       assign(socket,
+         code: code,
+         player_id: player_id,
+         view: view,
+         online: online_ids(code, player_id)
+       )}
     else
       :error -> {:ok, to_lobby(socket, "Комната #{code} не найдена")}
       false -> {:ok, to_lobby(socket, "Войдите в комнату #{code} по коду")}
@@ -35,6 +46,12 @@ defmodule UnoWeb.GameLive do
 
   @impl true
   def handle_info({:game_update, _code}, socket), do: {:noreply, refresh(socket)}
+
+  # Кто-то подключился/отвалился — пересчитываем онлайн-набор из Presence.
+  def handle_info(%Phoenix.Socket.Broadcast{event: "presence_diff"}, socket) do
+    %{code: code, player_id: player_id} = socket.assigns
+    {:noreply, assign(socket, :online, online_ids(code, player_id))}
+  end
 
   # --- Лобби ---
 
@@ -96,6 +113,23 @@ defmodule UnoWeb.GameLive do
   end
 
   defp member?(view, player_id), do: Enum.any?(view.players, &(&1.id == player_id))
+
+  # Кто сейчас подключён (по Presence на топике партии). Себя считаем онлайн
+  # всегда: на dead render track ещё не сработал, мигать «офлайн» не надо.
+  defp online_ids(code, me) do
+    code |> Server.topic() |> Presence.list() |> Map.keys() |> MapSet.new() |> MapSet.put(me)
+  end
+
+  # Офлайн-индикация — только для реальных игроков; боты живут на сервере.
+  defp offline?(player, online), do: not player.is_bot and not MapSet.member?(online, player.id)
+
+  # То же по id (для `others` проекции — ботность берём из ростера).
+  defp offline_id?(view, online, id) do
+    case Enum.find(view.players, &(&1.id == id)) do
+      nil -> false
+      player -> offline?(player, online)
+    end
+  end
 
   defp my_ready?(view, player_id) do
     case Enum.find(view.players, &(&1.id == player_id)) do
@@ -236,7 +270,11 @@ defmodule UnoWeb.GameLive do
         <ul class="uno-room__players">
           <li
             :for={{player, idx} <- Enum.with_index(@view.players)}
-            class={["uno-player", player.id == @player_id && "is-me"]}
+            class={[
+              "uno-player",
+              player.id == @player_id && "is-me",
+              offline?(player, @online) && "is-offline"
+            ]}
           >
             <span class="uno-player__avatar">{avatar(player.name)}</span>
             <span class="uno-player__name">{player.name}</span>
@@ -245,8 +283,14 @@ defmodule UnoWeb.GameLive do
             <span :if={not player.is_bot and player.ready} class="uno-tag uno-tag--ready">
               ✓ готов
             </span>
-            <span :if={not player.is_bot and not player.ready} class="uno-tag uno-tag--wait">
+            <span
+              :if={not player.is_bot and not player.ready and not offline?(player, @online)}
+              class="uno-tag uno-tag--wait"
+            >
               ждём…
+            </span>
+            <span :if={offline?(player, @online)} class="uno-tag uno-tag--offline">
+              офлайн
             </span>
           </li>
         </ul>
@@ -301,7 +345,11 @@ defmodule UnoWeb.GameLive do
       <section class={["uno-opponents", length(@view.others) >= 3 && "uno-opponents--arc"]}>
         <div
           :for={opp <- @view.others}
-          class={["uno-pod", opp.id == @view.whose_turn && "is-active"]}
+          class={[
+            "uno-pod",
+            opp.id == @view.whose_turn && "is-active",
+            offline_id?(@view, @online, opp.id) && "is-offline"
+          ]}
         >
           <div class="uno-avwrap">
             <div
@@ -314,6 +362,12 @@ defmodule UnoWeb.GameLive do
             >
             </div>
             <div class="uno-pod__avatar">{avatar(opp.name)}</div>
+            <span
+              :if={offline_id?(@view, @online, opp.id)}
+              class="uno-pod__status"
+              title="офлайн"
+            >
+            </span>
           </div>
           <div class="uno-pod__name">{opp.name}</div>
           <div class="uno-pod__fan">

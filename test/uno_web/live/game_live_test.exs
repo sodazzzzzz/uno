@@ -171,5 +171,71 @@ defmodule UnoWeb.GameLiveTest do
     end
   end
 
+  describe "presence (онлайн/офлайн)" do
+    # Presence-диффы приходят асинхронно — даём им долететь.
+    defp eventually(fun, tries \\ 50) do
+      cond do
+        fun.() ->
+          :ok
+
+        tries == 0 ->
+          flunk("условие так и не выполнилось")
+
+        true ->
+          Process.sleep(20)
+          eventually(fun, tries - 1)
+      end
+    end
+
+    test "после подключения игрок трекается на топике партии", %{conn: conn} do
+      code = room([player("me", "Алиса")])
+      {:ok, _view, _html} = live(conn_as(conn, "me"), ~p"/game/#{code}")
+
+      assert Map.has_key?(UnoWeb.Presence.list(Server.topic(code)), "me")
+    end
+
+    test "реальный игрок без подключения показан офлайн (и без «ждём…»)", %{conn: conn} do
+      code = room([player("me", "Алиса"), player("her", "Вера")])
+      {:ok, view, _html} = live(conn_as(conn, "me"), ~p"/game/#{code}")
+      html = render(view)
+
+      assert html =~ "офлайн"
+      assert html =~ "is-offline"
+
+      # «ждём…» уступает место «офлайн», но остаётся у подключённых неготовых.
+      refute view |> element("li.is-offline") |> render() =~ "ждём…"
+    end
+
+    test "бот офлайн-бейджа не получает", %{conn: conn} do
+      code = room([player("me", "Алиса"), player("bot-1", "Лео", true)])
+      {:ok, _view, html} = live(conn_as(conn, "me"), ~p"/game/#{code}")
+
+      refute html =~ "офлайн"
+    end
+
+    test "подключение второго игрока убирает его офлайн-бейдж у первого", %{conn: conn} do
+      code = room([player("me", "Алиса"), player("her", "Вера")])
+      {:ok, view, _html} = live(conn_as(conn, "me"), ~p"/game/#{code}")
+      assert render(view) =~ "офлайн"
+
+      {:ok, _view2, _html} = live(conn_as(build_conn(), "her"), ~p"/game/#{code}")
+
+      eventually(fn -> not (render(view) =~ "офлайн") end)
+    end
+
+    test "за столом офлайн-соперник приглушён и со статус-лункой", %{conn: conn} do
+      code = room([player("me", "Алиса"), player("her", "Вера")])
+
+      # Вера готова, но так и не подключилась; я готовлюсь кликом — авто-старт.
+      Server.set_ready(code, "her", true)
+      {:ok, view, _html} = live(conn_as(conn, "me"), ~p"/game/#{code}")
+      html = view |> element("button", "Готов") |> render_click()
+
+      assert html =~ "uno-hand"
+      assert view |> element("div.uno-pod.is-offline") |> render() =~ "Вера"
+      assert html =~ "uno-pod__status"
+    end
+  end
+
   defp server_players(code), do: length(Server.state(code).players)
 end
