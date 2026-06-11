@@ -192,7 +192,9 @@ defmodule UnoWeb.GameLiveTest do
       view |> element("button", "← выход") |> render_click()
 
       assert_redirect(view, "/")
-      assert Manager.find(code) == :error
+
+      # Registry чистится асинхронно после смерти процесса — поллим.
+      eventually(fn -> Manager.find(code) == :error end)
     end
 
     test "закрыл вкладку — спустя grace игрок удалён (presence-мост)", %{conn: conn} do

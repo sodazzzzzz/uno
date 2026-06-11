@@ -333,7 +333,10 @@ defmodule Uno.Game.ServerTest do
       assert :ok = Server.remove_player(code, "p1")
 
       assert_receive {:DOWN, ^ref, :process, ^pid, :normal}
-      assert Manager.find(code) == :error
+
+      # Registry снимает регистрацию асинхронно (по своему DOWN-монитору) —
+      # наш DOWN может прийти раньше; поллим, а не проверяем мгновенно.
+      eventually(fn -> Manager.find(code) == :error end)
     end
 
     test "отвал: player_left удаляет спустя grace" do
