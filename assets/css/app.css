@@ -323,6 +323,19 @@
   color: var(--uno-muted);
   background: transparent;
 }
+/* офлайн: игрок «отошёл от стола» — тёплое приглушение, без тревоги */
+.uno-tag--offline {
+  color: var(--uno-muted);
+  background: transparent;
+  border: 1px dashed rgba(120, 90, 50, 0.4);
+  padding: 2px 7px;
+}
+.uno-player.is-offline {
+  opacity: 0.62;
+}
+.uno-player.is-offline .uno-player__avatar {
+  filter: grayscale(0.85);
+}
 .uno-room__hint {
   margin: 14px 0 0;
   color: var(--uno-muted);
@@ -431,6 +444,30 @@
 .uno-pod__count {
   font-size: 11px;
   color: var(--uno-muted);
+}
+/* офлайн-под: аватар выцветает в бумагу; красное кольцо is-active при этом
+   остаётся — «его ход, а он отошёл». */
+.uno-pod.is-offline .uno-pod__avatar {
+  filter: grayscale(0.85);
+  opacity: 0.7;
+}
+.uno-pod.is-offline:not(.is-active) .uno-pod__name {
+  color: var(--uno-muted);
+}
+.uno-pod.is-offline .uno-pod__fan {
+  opacity: 0.55;
+}
+/* пунктирная «лунка» на месте статуса — пустующее место за столом */
+.uno-pod__status {
+  position: absolute;
+  right: 1px;
+  bottom: 1px;
+  width: 13px;
+  height: 13px;
+  border-radius: 50%;
+  background: var(--uno-paper);
+  border: 1.5px dashed rgba(120, 90, 50, 0.55);
+  z-index: 1;
 }
 .uno-pod__fan {
   display: flex;
