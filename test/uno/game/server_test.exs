@@ -281,6 +281,127 @@ defmodule Uno.Game.ServerTest do
     end
   end
 
+  describe "выход из комнаты: remove_player/2 и grace отвала" do
+    # Поллинг для асинхронных grace-эффектов (таймеры удаления).
+    defp eventually(fun, tries \\ 50) do
+      cond do
+        fun.() ->
+          :ok
+
+        tries == 0 ->
+          flunk("условие так и не выполнилось")
+
+        true ->
+          Process.sleep(20)
+          eventually(fun, tries - 1)
+      end
+    end
+
+    test "удаляет из ростера и шлёт broadcast" do
+      code = lobby([player("p1"), player("p2")])
+      :ok = Phoenix.PubSub.subscribe(Uno.PubSub, Server.topic(code))
+
+      assert :ok = Server.remove_player(code, "p2")
+
+      assert Enum.map(Server.state(code).players, & &1.id) == ["p1"]
+      assert_receive {:game_update, ^code}
+    end
+
+    test "во время партии — {:error, :game_started}, место держится" do
+      code = lobby([player("p1"), player("p2")])
+      :ok = Server.start_game(code)
+
+      assert {:error, :game_started} = Server.remove_player(code, "p2")
+      assert length(Server.state(code).players) == 2
+    end
+
+    test "удаление неготового завершает готовность — партия авто-стартует" do
+      code = lobby([player("p1"), player("p2"), player("p3")])
+      :ok = Server.set_ready(code, "p1", true)
+      :ok = Server.set_ready(code, "p2", true)
+
+      # p3 не готов и уходит — оставшиеся двое готовы, авто-старт.
+      assert :ok = Server.remove_player(code, "p3")
+      assert Server.state(code).phase == :playing
+    end
+
+    test "последний реальный игрок ушёл — комната гаснет (и с ботами тоже)" do
+      code = lobby([player("p1"), player("bot", true)])
+      {:ok, pid} = Manager.find(code)
+      ref = Process.monitor(pid)
+
+      assert :ok = Server.remove_player(code, "p1")
+
+      assert_receive {:DOWN, ^ref, :process, ^pid, :normal}
+
+      # Registry снимает регистрацию асинхронно (по своему DOWN-монитору) —
+      # наш DOWN может прийти раньше; поллим, а не проверяем мгновенно.
+      eventually(fn -> Manager.find(code) == :error end)
+    end
+
+    test "отвал: player_left удаляет спустя grace" do
+      code = lobby([player("p1"), player("p2")], leave_grace_ms: 30)
+
+      :ok = Server.player_left(code, "p2")
+
+      eventually(fn -> Enum.map(Server.state(code).players, & &1.id) == ["p1"] end)
+    end
+
+    test "возврат до истечения grace гасит удаление (F5 безопасен)" do
+      code = lobby([player("p1"), player("p2")], leave_grace_ms: 30)
+
+      :ok = Server.player_left(code, "p2")
+      :ok = Server.player_returned(code, "p2")
+
+      Process.sleep(100)
+      assert length(Server.state(code).players) == 2
+    end
+
+    test "отвал бота/чужака не взводит таймер (no-op)" do
+      code = lobby([player("p1"), player("bot", true)], leave_grace_ms: 30)
+
+      :ok = Server.player_left(code, "bot")
+      :ok = Server.player_left(code, "ghost")
+
+      Process.sleep(100)
+      assert length(Server.state(code).players) == 2
+    end
+
+    test "уведомления в несуществующую комнату безвредны" do
+      assert :ok = Server.player_left("no-such-room", "p1")
+      assert :ok = Server.player_returned("no-such-room", "p1")
+    end
+
+    test "отвал во время партии не удаляет; после «Ещё раз» мёртвая душа вычищается" do
+      # Засеянная завершённая партия: p1 победил, p2 так и не вернётся.
+      code = unique_code()
+      players = [player("p1"), player("p2")]
+
+      game = %State{
+        room_code: code,
+        phase: :finished,
+        players: players,
+        hands: %{"p1" => [], "p2" => [num(:red, 3)]},
+        discard_pile: [num(:red, 5)],
+        current_color: :red,
+        winner: "p1"
+      }
+
+      {:ok, _pid} = Manager.create(code, players: players, game: game, leave_grace_ms: 30)
+      on_exit(fn -> Manager.stop(code) end)
+
+      :ok = Server.player_left(code, "p2")
+
+      # Вне лобби grace-таймер перевзводится, но НЕ удаляет.
+      Process.sleep(100)
+      assert length(Server.state(code).players) == 2
+
+      # «Ещё раз» → комната ожидания → цикл дочищает отвалившегося.
+      :ok = Server.restart(code)
+      eventually(fn -> Enum.map(Server.state(code).players, & &1.id) == ["p1"] end)
+    end
+  end
+
   # Ждёт, пока ход дойдёт до игрока `id` (получая broadcast'ы шагов бота).
   defp await_current(code, id) do
     receive do

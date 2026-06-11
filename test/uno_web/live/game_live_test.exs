@@ -9,9 +9,10 @@ defmodule UnoWeb.GameLiveTest do
   defp player(id, name, is_bot \\ false), do: %{id: id, name: name, is_bot: is_bot}
 
   # conn с известным player_id в сессии + созданная комната с этим игроком.
-  defp room(players) do
+  # opts прокидываются в Server (напр. leave_grace_ms для grace-тестов).
+  defp room(players, opts \\ []) do
     code = unique_code()
-    {:ok, _pid} = Manager.create(code, players: players)
+    {:ok, _pid} = Manager.create(code, Keyword.put(opts, :players, players))
     on_exit(fn -> Manager.stop(code) end)
     code
   end
@@ -168,6 +169,56 @@ defmodule UnoWeb.GameLiveTest do
       assert html =~ "Код комнаты"
       assert html =~ "Готов"
       refute html =~ "победил"
+    end
+  end
+
+  describe "выход из комнаты ожидания" do
+    test "кнопка «выход» удаляет из ростера и уводит в лобби", %{conn: conn} do
+      code = room([player("me", "Алиса"), player("her", "Вера")])
+      conn = conn_as(conn, "me")
+      {:ok, view, _html} = live(conn, ~p"/game/#{code}")
+
+      view |> element("button", "← выход") |> render_click()
+
+      assert_redirect(view, "/")
+      assert Enum.map(Server.state(code).players, & &1.id) == ["her"]
+    end
+
+    test "последний реальный вышел — комната гаснет", %{conn: conn} do
+      code = room([player("me", "Алиса"), player("bot-1", "Лео", true)])
+      conn = conn_as(conn, "me")
+      {:ok, view, _html} = live(conn, ~p"/game/#{code}")
+
+      view |> element("button", "← выход") |> render_click()
+
+      assert_redirect(view, "/")
+
+      # Registry чистится асинхронно после смерти процесса — поллим.
+      eventually(fn -> Manager.find(code) == :error end)
+    end
+
+    test "закрыл вкладку — спустя grace игрок удалён (presence-мост)", %{conn: conn} do
+      code = room([player("me", "Алиса"), player("her", "Вера")], leave_grace_ms: 50)
+      conn = conn_as(conn, "me")
+      {:ok, view, _html} = live(conn, ~p"/game/#{code}")
+
+      # Смерть LiveView-процесса = закрытие вкладки: presence шлёт leave.
+      GenServer.stop(view.pid)
+
+      eventually(fn -> Enum.map(Server.state(code).players, & &1.id) == ["her"] end)
+    end
+
+    test "F5 не выкидывает: быстрый возврат гасит grace-таймер", %{conn: conn} do
+      code = room([player("me", "Алиса"), player("her", "Вера")], leave_grace_ms: 300)
+      conn = conn_as(conn, "me")
+      {:ok, view, _html} = live(conn, ~p"/game/#{code}")
+
+      GenServer.stop(view.pid)
+      {:ok, _view2, _html} = live(conn, ~p"/game/#{code}")
+
+      # Спим дольше grace: таймер удаления должен быть погашен возвратом.
+      Process.sleep(600)
+      assert length(Server.state(code).players) == 2
     end
   end
 
