@@ -31,15 +31,25 @@ defmodule Uno.Game.Server do
   Состояние процесса — `%{game: State.t(), turn_ms: pos_integer}`: конфиг хода
   отделён от игрового состояния. `:turn_ms` берётся из opts (по умолчанию 30с).
 
-  `restart: :temporary` — без персистентности воскрешать упавшую партию пустой
-  бессмысленно; изоляцию даёт сам `:one_for_one`-супервизор.
+  ## Let-it-crash (восстановление из снапшота)
+
+  `restart: :transient` — supervisor поднимает процесс только после
+  АВАРИЙНОЙ смерти (исключение/kill); штатный стоп (`:normal`/`:shutdown`) —
+  конец комнаты. Каждое изменение состояния снапшотится в `Uno.Game.Stash`
+  (ETS у отдельного владельца — переживает падение партии); `init`
+  восстанавливает: **снапшот → опция `:game` → свежее лобби**, после чего
+  `handle_continue` перевзводит таймер/бот-ход и шлёт broadcast. `turn_ref`
+  при этом монотонно растёт, так что протухшие сообщения старой инкарнации
+  безвредны (§4.3). При штатной смерти `terminate/2` чистит снапшот (для
+  `:shutdown` от супервизора нужен `trap_exit`); при аварийной — запись
+  остаётся и становится точкой восстановления.
   """
 
-  use GenServer, restart: :temporary
+  use GenServer, restart: :transient
 
   require Logger
 
-  alias Uno.Game.{Bot, Deck, Rules, State}
+  alias Uno.Game.{Bot, Deck, Rules, Stash, State}
 
   @max_players 4
   @min_players 2
@@ -173,25 +183,44 @@ defmodule Uno.Game.Server do
 
   @impl true
   def init(opts) do
+    # Чтобы terminate/2 успел вычистить снапшот при :shutdown от супервизора
+    # (Manager.stop); аварийные смерти terminate не зовут — снапшот остаётся.
+    Process.flag(:trap_exit, true)
+
     room_code = Keyword.fetch!(opts, :room_code)
     players = Keyword.get(opts, :players, [])
     turn_ms = Keyword.get(opts, :turn_ms, @default_turn_ms)
     bot_delay = Keyword.get(opts, :bot_delay, @default_bot_delay)
     leave_grace_ms = Keyword.get(opts, :leave_grace_ms, @default_leave_grace_ms)
 
-    # :game позволяет засеять готовое состояние (тесты; в будущем — восстановление
-    # из персистентности). По умолчанию — свежее лобби.
-    game = Keyword.get(opts, :game) || State.new(room_code, players)
+    s = %{
+      game: nil,
+      turn_ms: turn_ms,
+      bot_delay: bot_delay,
+      leave_grace_ms: leave_grace_ms,
+      leave_timers: %{}
+    }
 
-    {:ok,
-     %{
-       game: game,
-       turn_ms: turn_ms,
-       bot_delay: bot_delay,
-       leave_grace_ms: leave_grace_ms,
-       leave_timers: %{}
-     }}
+    # Источник состояния по приоритету: снапшот (рестарт после падения — args у
+    # супервизора исходные, правду знает только Stash) → опция :game (тесты;
+    # задел под персистентность) → свежее лобби.
+    case Stash.get(room_code) do
+      {:ok, %State{} = snapshot} ->
+        Logger.info("Партия #{room_code} восстановлена из снапшота после падения")
+        {:ok, %{s | game: snapshot}, {:continue, :restored}}
+
+      :error ->
+        game = Keyword.get(opts, :game) || State.new(room_code, players)
+        {:ok, %{s | game: game}}
+    end
   end
+
+  # Восстановленной партии нужно заново всё взвести: commit инкрементит turn_ref
+  # (протухшие таймауты/бот-ходы погибшей инкарнации обезврежены §4.3), ставит
+  # свежий таймер хода, планирует бот-ход и шлёт broadcast — клиенты
+  # ре-проецируют состояние и новый дедлайн.
+  @impl true
+  def handle_continue(:restored, s), do: {:noreply, commit(s, s.game)}
 
   @impl true
   def handle_call(:state, _from, %{game: game} = s), do: {:reply, game, s}
@@ -246,9 +275,7 @@ defmodule Uno.Game.Server do
 
   def handle_call(:restart, _from, %{game: %State{phase: :finished} = game} = s) do
     # Возврат в комнату ожидания тем же составом; дальше — обычный ready-флоу.
-    new_game = State.reset_to_lobby(game)
-    broadcast(new_game)
-    {:reply, :ok, %{s | game: new_game}}
+    {:reply, :ok, checkpoint(s, State.reset_to_lobby(game))}
   end
 
   def handle_call(:restart, _from, s), do: {:reply, {:error, :not_finished}, s}
@@ -341,13 +368,21 @@ defmodule Uno.Game.Server do
   defp reply_with({:ok, new_game}, s), do: {:reply, :ok, commit(s, new_game)}
   defp reply_with({:error, _reason} = error, s), do: {:reply, error, s}
 
-  # Фиксирует новое состояние игры: взводит таймер хода, шлёт уведомление и (если
-  # ходить должен бот) планирует его автоход.
+  # Фиксирует новое состояние игры: взводит таймер хода, снапшотит, шлёт
+  # уведомление и (если ходить должен бот) планирует его автоход.
   defp commit(s, new_game) do
     armed = arm_turn(new_game, s.turn_ms)
+    Stash.put(armed)
     broadcast(armed)
     maybe_schedule_bot(armed, s.bot_delay)
     %{s | game: armed}
+  end
+
+  # Фиксация состояния БЕЗ таймера/ботов (лобби-изменения): снапшот + уведомление.
+  defp checkpoint(s, game) do
+    Stash.put(game)
+    broadcast(game)
+    %{s | game: game}
   end
 
   # Если действовать должен бот — планируем его ход отдельным сообщением с
@@ -413,10 +448,24 @@ defmodule Uno.Game.Server do
     if Enum.any?(game.players, &(not &1.is_bot)) do
       {:cont, settle_lobby(s, game)}
     else
+      # Комната гаснет штатно — снапшот вычистит terminate/2 (:normal).
       broadcast(game)
       {:stop, %{s | game: game}}
     end
   end
+
+  # Штатная смерть комнаты (последний реальный вышел / Manager.stop) — снапшот
+  # больше не нужен и не должен воскреснуть в новой комнате с тем же кодом.
+  # Аварийные причины сюда не попадают (а на :kill terminate вообще не зовётся) —
+  # снапшот остаётся точкой восстановления для рестарта.
+  @impl true
+  def terminate(reason, %{game: %State{room_code: room_code}})
+      when reason == :normal or reason == :shutdown or
+             (is_tuple(reason) and elem(reason, 0) == :shutdown) do
+    Stash.delete(room_code)
+  end
+
+  def terminate(_crash_reason, _s), do: :ok
 
   # Применяет лобби-состояние: если все реальные готовы и игроков ≥ минимума —
   # раздаёт партию (commit: таймер + broadcast + автоход ботов); иначе просто
@@ -426,8 +475,7 @@ defmodule Uno.Game.Server do
     if all_real_ready?(game) do
       commit(s, Rules.deal(game, Deck.shuffle(Deck.new())))
     else
-      broadcast(game)
-      %{s | game: game}
+      checkpoint(s, game)
     end
   end
 
