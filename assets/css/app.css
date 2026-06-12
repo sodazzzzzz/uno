@@ -124,6 +124,7 @@
   --uno-dur-1: 140ms;
   --uno-dur-2: 240ms;
   --uno-dur-3: 420ms;
+  --uno-dur-4: 520ms;
 }
 
 .uno-lobby,
@@ -703,7 +704,8 @@
   margin-left: -30px;
   transform-origin: bottom center;
   transform: rotate(calc((var(--i) - (var(--n) - 1) / 2) * 4deg));
-  transition: transform 0.16s ease;
+  /* смыкание веера после хода — мягче, чем hover-отклик */
+  transition: transform 0.34s var(--uno-ease-soft);
 }
 .uno-cardbtn:first-child {
   margin-left: 0;
@@ -899,11 +901,14 @@
   }
 }
 .uno-cardbtn .uno-card {
-  animation: uno-card-in var(--uno-dur-2) var(--uno-ease) backwards;
-  animation-delay: calc(var(--uno-deal, 0) * var(--i, 0) * 45ms);
+  /* Длительность и stagger управляются ТОЛЬКО custom properties — их смена при
+     снятии .is-dealing не трогает animation-* и не перезапускает доигравшее. */
+  animation: uno-card-in var(--uno-card-dur, 320ms) var(--uno-ease-soft) backwards;
+  animation-delay: calc(var(--uno-deal, 0) * var(--i, 0) * 60ms);
 }
 .uno-table.is-dealing {
   --uno-deal: 1;
+  --uno-card-dur: var(--uno-dur-4);
 }
 
 /* --- Раздача: поды соперников проявляются (только opacity — у дуги свой
@@ -921,12 +926,12 @@
 /* --- Сброс: прилёт сыгранной карты (узел пересоздаётся по id от discard_count) --- */
 @keyframes uno-land {
   from {
-    opacity: 0.35;
-    transform: translateY(-10px) rotate(-5deg) scale(1.08);
+    opacity: 0.15;
+    transform: translateY(-14px) rotate(-3deg) scale(1.05);
   }
 }
 .uno-discard .uno-card {
-  animation: uno-land var(--uno-dur-2) var(--uno-ease);
+  animation: uno-land var(--uno-dur-4) var(--uno-ease-soft);
 }
 
 /* --- Смена хода: кольцо таймера мягко расцветает у нового активного --- */

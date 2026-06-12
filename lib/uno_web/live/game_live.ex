@@ -135,9 +135,11 @@ defmodule UnoWeb.GameLive do
         # Переход «лобби → стол» = раздача со stagger-анимацией. Флаг ЛИПКИЙ:
         # broadcast самой раздачи приходит следом и не должен смыть класс,
         # пока stagger играет; гасим отложенным :deal_done (косметика, не
-        # игровое время — серверной логики на этом таймере нет).
+        # игровое время — серверной логики на этом таймере нет). 1300мс — с
+        # запасом больше полного stagger-а (6·60мс + 520мс ≈ 880мс): снятие
+        # класса под бегущим keyframe-ом сдвинуло бы его прогресс.
         dealt_now = socket.assigns.view.phase == :lobby and new_view.phase == :playing
-        if dealt_now, do: Process.send_after(self(), :deal_done, 800)
+        if dealt_now, do: Process.send_after(self(), :deal_done, 1300)
 
         assign(socket, view: new_view, just_dealt: socket.assigns.just_dealt or dealt_now)
 
