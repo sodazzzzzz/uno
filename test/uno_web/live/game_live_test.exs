@@ -145,6 +145,34 @@ defmodule UnoWeb.GameLiveTest do
       assert html =~ "data-deadline"
     end
 
+    test "motion-ключи: id сброса от discard_count, id направления, stagger раздачи", %{
+      conn: conn
+    } do
+      view = started(conn)
+      html = render(view)
+
+      # После раздачи в сбросе одна карта; реверс ещё не играли — :cw.
+      assert html =~ ~s(id="discard-1")
+      assert html =~ ~s(id="dir-cw")
+
+      # started() кликает «Готов» → переход :lobby → :playing = рендер раздачи;
+      # класс липкий (broadcast самой раздачи его не смывает)...
+      assert html =~ "is-dealing"
+
+      # ...и снимается отложенным :deal_done (stagger одноразовый).
+      send(view.pid, :deal_done)
+      refute render(view) =~ "is-dealing"
+    end
+
+    test "на экране победы рендерится карт-конфетти", %{conn: conn} do
+      players = [player("me", "Алиса"), player("bot-1", "Лео", true)]
+      code = finished_room(players, "me")
+      {:ok, _view, html} = live(conn_as(conn, "me"), ~p"/game/#{code}")
+
+      assert html =~ "uno-confetti"
+      assert html =~ "uno-confetti__bit"
+    end
+
     test "крафтовый нечисловой index не роняет канал (находка ревью)", %{conn: conn} do
       view = started(conn)
 

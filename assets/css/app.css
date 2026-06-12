@@ -118,6 +118,13 @@
   --uno-muted: #8a7c66;
   --uno-display: "Baloo 2", system-ui, sans-serif;
   --uno-body: "Inter", system-ui, sans-serif;
+  /* motion-токены: «тёплый и спокойный» — короткие ease-out, без пружин */
+  --uno-ease: cubic-bezier(0.25, 1, 0.5, 1);
+  --uno-ease-soft: cubic-bezier(0.22, 1, 0.36, 1);
+  --uno-dur-1: 140ms;
+  --uno-dur-2: 240ms;
+  --uno-dur-3: 420ms;
+  --uno-dur-4: 520ms;
 }
 
 .uno-lobby,
@@ -697,7 +704,8 @@
   margin-left: -30px;
   transform-origin: bottom center;
   transform: rotate(calc((var(--i) - (var(--n) - 1) / 2) * 4deg));
-  transition: transform 0.16s ease;
+  /* смыкание веера после хода — мягче, чем hover-отклик */
+  transition: transform 0.34s var(--uno-ease-soft);
 }
 .uno-cardbtn:first-child {
   margin-left: 0;
@@ -872,5 +880,172 @@
   }
   .uno-you__meta {
     display: none;
+  }
+}
+
+/* ===================================================================
+   UNO — Motion (issue #63): «тёплый и спокойный».
+   Только transform/opacity/shadow. Событийные входы играют через
+   пересоздание узлов morphdom (id-ключи) или появление узлов (:if).
+   Узлы с собственным transform (веер .uno-cardbtn, дуга .uno-pod) не
+   анимируем по transform — берём внутренний слой или только opacity.
+   =================================================================== */
+
+/* --- Рука: вход карты (добор всегда; раздача — со stagger через --uno-deal,
+   которую включает .is-dealing; смена самой custom property не перезапускает
+   доигравшие анимации существующих узлов, в отличие от смены animation-*) --- */
+@keyframes uno-card-in {
+  from {
+    opacity: 0;
+    transform: translateY(-14px) scale(0.96);
+  }
+}
+.uno-cardbtn .uno-card {
+  /* Длительность и stagger управляются ТОЛЬКО custom properties — их смена при
+     снятии .is-dealing не трогает animation-* и не перезапускает доигравшее. */
+  animation: uno-card-in var(--uno-card-dur, 320ms) var(--uno-ease-soft) backwards;
+  animation-delay: calc(var(--uno-deal, 0) * var(--i, 0) * 60ms);
+}
+.uno-table.is-dealing {
+  --uno-deal: 1;
+  --uno-card-dur: var(--uno-dur-4);
+}
+
+/* --- Раздача: поды соперников проявляются (только opacity — у дуги свой
+   transform), чуть вразнобой --- */
+@keyframes uno-fade-in {
+  from {
+    opacity: 0;
+  }
+}
+.uno-table.is-dealing .uno-pod {
+  animation: uno-fade-in var(--uno-dur-3) var(--uno-ease) backwards;
+  animation-delay: calc(var(--i, 0) * 60ms);
+}
+
+/* --- Сброс: прилёт сыгранной карты (узел пересоздаётся по id от discard_count) --- */
+@keyframes uno-land {
+  from {
+    opacity: 0.15;
+    transform: translateY(-14px) rotate(-3deg) scale(1.05);
+  }
+}
+.uno-discard .uno-card {
+  animation: uno-land var(--uno-dur-4) var(--uno-ease-soft);
+}
+
+/* --- Смена хода: кольцо таймера мягко расцветает у нового активного --- */
+@keyframes uno-ring-in {
+  from {
+    opacity: 0;
+    transform: scale(0.88);
+  }
+}
+.uno-ring {
+  animation: uno-ring-in var(--uno-dur-3) var(--uno-ease);
+}
+
+/* --- Реверс: стрелка разворачивается (узел пересоздаётся по id от direction) --- */
+@keyframes uno-spin-in {
+  from {
+    opacity: 0;
+    transform: rotate(-180deg);
+  }
+}
+.uno-dir {
+  display: inline-block;
+  animation: uno-spin-in var(--uno-dur-3) var(--uno-ease);
+}
+
+/* --- Чип цвета: плавный перелив при смене активного цвета --- */
+.uno-dot {
+  transition: background var(--uno-dur-2) var(--uno-ease);
+}
+
+/* --- Оверлеи (выбор цвета, победа): тёплый вход --- */
+.uno-overlay {
+  animation: uno-fade-in var(--uno-dur-2) ease-out;
+}
+@keyframes uno-pop {
+  from {
+    opacity: 0;
+    transform: translateY(10px) scale(0.94);
+  }
+}
+.uno-overlay__card {
+  animation: uno-pop var(--uno-dur-3) var(--uno-ease) backwards;
+}
+
+/* --- Победа: салют карт-конфетти в цветах UNO (не ловит клики) --- */
+.uno-confetti {
+  position: fixed;
+  inset: 0;
+  overflow: hidden;
+  pointer-events: none;
+}
+@keyframes uno-confetti-fall {
+  0% {
+    opacity: 0;
+    transform: translate(0, 0) rotate(0deg);
+  }
+  8% {
+    opacity: 1;
+  }
+  82% {
+    opacity: 1;
+  }
+  100% {
+    opacity: 0;
+    transform: translate(var(--drift, 0px), 105vh) rotate(var(--spin, 240deg));
+  }
+}
+.uno-confetti__bit {
+  position: absolute;
+  top: -24px;
+  left: var(--x, 50%);
+  width: 12px;
+  height: 17px;
+  border-radius: 3px;
+  opacity: 0;
+  animation: uno-confetti-fall var(--dur, 2s) ease-in var(--delay, 0ms) 1 forwards;
+}
+.uno-confetti__bit:nth-child(4n + 1) {
+  background: var(--uno-red);
+}
+.uno-confetti__bit:nth-child(4n + 2) {
+  background: var(--uno-yellow);
+}
+.uno-confetti__bit:nth-child(4n + 3) {
+  background: var(--uno-green);
+}
+.uno-confetti__bit:nth-child(4n) {
+  background: var(--uno-blue);
+}
+
+/* --- Комната ожидания: строки въезжают, бейджи проявляются --- */
+@keyframes uno-row-in {
+  from {
+    opacity: 0;
+    transform: translateX(-8px);
+  }
+}
+.uno-player {
+  animation: uno-row-in var(--uno-dur-2) var(--uno-ease) backwards;
+  animation-delay: calc(var(--i, 0) * 40ms);
+}
+.uno-tag {
+  animation: uno-fade-in var(--uno-dur-1) ease-out;
+}
+
+/* --- Доступность: вне motion-предпочтений всё происходит мгновенно.
+   Кольцо таймера (rAF) — индикатор состояния, его не трогаем. --- */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-delay: 0ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
   }
 }

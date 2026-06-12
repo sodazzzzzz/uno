@@ -32,7 +32,10 @@ defmodule UnoWeb.GameLive do
          code: code,
          player_id: player_id,
          view: view,
-         online: online_ids(code, player_id)
+         online: online_ids(code, player_id),
+         # true только на рендере «лобби → стол» — включает stagger-раздачу;
+         # на mount в идущую партию (F5/reconnect) раздачу не проигрываем.
+         just_dealt: false
        )}
     else
       :error -> {:ok, to_lobby(socket, "Комната #{code} не найдена")}
@@ -52,6 +55,9 @@ defmodule UnoWeb.GameLive do
     %{code: code, player_id: player_id} = socket.assigns
     {:noreply, assign(socket, :online, online_ids(code, player_id))}
   end
+
+  # Stagger раздачи доигран — снимаем класс (см. refresh/1).
+  def handle_info(:deal_done, socket), do: {:noreply, assign(socket, :just_dealt, false)}
 
   # --- Лобби ---
 
@@ -124,7 +130,18 @@ defmodule UnoWeb.GameLive do
     # (последний реальный игрок вышел) — тогда просто уходим в лобби.
     case Manager.find(socket.assigns.code) do
       {:ok, _pid} ->
-        assign(socket, :view, Server.project(socket.assigns.code, socket.assigns.player_id))
+        new_view = Server.project(socket.assigns.code, socket.assigns.player_id)
+
+        # Переход «лобби → стол» = раздача со stagger-анимацией. Флаг ЛИПКИЙ:
+        # broadcast самой раздачи приходит следом и не должен смыть класс,
+        # пока stagger играет; гасим отложенным :deal_done (косметика, не
+        # игровое время — серверной логики на этом таймере нет). 1300мс — с
+        # запасом больше полного stagger-а (6·60мс + 520мс ≈ 880мс): снятие
+        # класса под бегущим keyframe-ом сдвинуло бы его прогресс.
+        dealt_now = socket.assigns.view.phase == :lobby and new_view.phase == :playing
+        if dealt_now, do: Process.send_after(self(), :deal_done, 1300)
+
+        assign(socket, view: new_view, just_dealt: socket.assigns.just_dealt or dealt_now)
 
       :error ->
         push_navigate(socket, to: ~p"/")
@@ -212,6 +229,17 @@ defmodule UnoWeb.GameLive do
   defp suit_class(%{type: type}) when type in [:wild, :wild_draw_four], do: "uno-card--wild"
   defp suit_class(%{color: color}), do: "uno-card--#{color}"
 
+  # Детерминированный «разброс» конфетти из номера: без :rand (воспроизводимо),
+  # значения уходят в CSS-переменные keyframe-а падения.
+  defp confetti_style(i) do
+    x = rem(i * 61, 100)
+    delay = rem(i * 137, 600)
+    duration = 1600 + rem(i * 211, 900)
+    spin = 180 + rem(i * 97, 420)
+    drift = rem(i * 53, 80) - 40
+    "--x:#{x}%;--delay:#{delay}ms;--dur:#{duration}ms;--spin:#{spin}deg;--drift:#{drift}px"
+  end
+
   # --- Карта (функц-компонент) ---
 
   def card(assigns) do
@@ -294,6 +322,7 @@ defmodule UnoWeb.GameLive do
               player.id == @player_id && "is-me",
               offline?(player, @online) && "is-offline"
             ]}
+            style={"--i:#{idx}"}
           >
             <span class="uno-player__avatar">{avatar(player.name)}</span>
             <span class="uno-player__name">{player.name}</span>
@@ -352,7 +381,7 @@ defmodule UnoWeb.GameLive do
 
   defp render_table(assigns) do
     ~H"""
-    <main class="uno-table">
+    <main class={["uno-table", @just_dealt && "is-dealing"]}>
       <header class="uno-table__hud">
         <span class="uno-table__room">Комната {@code}</span>
         <span :if={@view.phase == :playing} class="uno-table__turn">
@@ -363,12 +392,13 @@ defmodule UnoWeb.GameLive do
 
       <section class={["uno-opponents", length(@view.others) >= 3 && "uno-opponents--arc"]}>
         <div
-          :for={opp <- @view.others}
+          :for={{opp, idx} <- Enum.with_index(@view.others)}
           class={[
             "uno-pod",
             opp.id == @view.whose_turn && "is-active",
             offline_id?(@view, @online, opp.id) && "is-offline"
           ]}
+          style={"--i:#{idx}"}
         >
           <div class="uno-avwrap">
             <div
@@ -400,13 +430,18 @@ defmodule UnoWeb.GameLive do
         <button class="uno-deck" phx-click="draw" disabled={not can_draw?(@view, @player_id)}>
           <span class="uno-deck__badge">UNO</span>
         </button>
-        <div class="uno-discard">
+        <%!-- id от discard_count: morphdom пересоздаёт узел на каждый розыгрыш —
+        entrance-анимация «прилёта» играет ровно один раз на новую карту. --%>
+        <div class="uno-discard" id={"discard-#{@view.discard_count}"}>
           <.card :if={@view.discard_top} card={@view.discard_top} />
         </div>
         <div class="uno-colorchip">
           <span class={["uno-dot", @view.current_color && "uno-dot--#{@view.current_color}"]}></span>
           <small>цвет</small>
-          <span class="uno-dir">{direction_arrow(@view.direction)}</span>
+          <%!-- id от direction: пересоздание узла при реверсе запускает разворот. --%>
+          <span class="uno-dir" id={"dir-#{@view.direction}"}>
+            {direction_arrow(@view.direction)}
+          </span>
         </div>
       </section>
 
@@ -474,6 +509,10 @@ defmodule UnoWeb.GameLive do
     </div>
 
     <div :if={@view.phase == :finished} class="uno-overlay">
+      <%!-- Салют карт-конфетти: чистый CSS, pointer-events нет — кнопки живые. --%>
+      <div class="uno-confetti" aria-hidden="true">
+        <i :for={i <- 1..16} class="uno-confetti__bit" style={confetti_style(i)}></i>
+      </div>
       <div class="uno-overlay__card uno-overlay__card--win">
         <div class="uno-overlay__emoji">🎉</div>
         <h2 class="uno-overlay__title">{name_of(@view, @view.winner)} победил!</h2>
