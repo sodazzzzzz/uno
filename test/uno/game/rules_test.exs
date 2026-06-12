@@ -196,6 +196,9 @@ defmodule Uno.Game.RulesTest do
       proj = Rules.project(state, "p1")
 
       assert proj.discard_top == %{color: :red, type: {:number, 5}}
+
+      # Размер стопки сброса публичен (ключ анимации прилёта карты на клиенте).
+      assert proj.discard_count == 2
       assert proj.current_color == :red
       assert proj.whose_turn == "p2"
       assert proj.direction == :ccw

@@ -50,6 +50,7 @@ defmodule Uno.Game.Rules do
           players: [%{id: State.player_id(), name: String.t(), is_bot: boolean, ready: boolean}],
           others: [%{id: State.player_id(), name: String.t(), card_count: non_neg_integer}],
           discard_top: Deck.card() | nil,
+          discard_count: non_neg_integer,
           current_color: Deck.color() | nil,
           whose_turn: State.player_id() | nil,
           direction: State.direction(),
@@ -162,6 +163,9 @@ defmodule Uno.Game.Rules do
       players: roster(state),
       others: others(state, player_id),
       discard_top: List.first(state.discard_pile),
+      # Размер стопки сброса — публичная информация (видна за столом); клиенту
+      # служит ключом пересоздания узла сброса (анимация прилёта карты).
+      discard_count: length(state.discard_pile),
       current_color: state.current_color,
       whose_turn: state.current_player,
       direction: state.direction,
