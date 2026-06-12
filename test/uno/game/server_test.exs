@@ -402,6 +402,125 @@ defmodule Uno.Game.ServerTest do
     end
   end
 
+  describe "let-it-crash: восстановление из снапшота (issue #61)" do
+    alias Uno.Game.Stash
+
+    # Убивает процесс партии и ждёт, пока супервизор поднимет новый.
+    defp kill_and_await_restart(code) do
+      {:ok, old} = Manager.find(code)
+      ref = Process.monitor(old)
+      Process.exit(old, :kill)
+      assert_receive {:DOWN, ^ref, :process, ^old, :killed}
+
+      eventually(fn ->
+        case Manager.find(code) do
+          {:ok, pid} -> pid != old and Process.alive?(pid)
+          :error -> false
+        end
+      end)
+    end
+
+    test "kill посреди партии: состояние восстановлено, партия играбельна" do
+      code = lobby([player("p1"), player("p2")])
+      :ok = Server.start_game(code)
+      :ok = Server.draw(code, "p1")
+      before = Server.state(code)
+
+      kill_and_await_restart(code)
+
+      restored = Server.state(code)
+      assert restored.phase == :playing
+      assert restored.hands == before.hands
+      assert restored.discard_pile == before.discard_pile
+      assert restored.current_player == before.current_player
+      assert restored.direction == before.direction
+      assert restored.current_color == before.current_color
+
+      assert restored.pending == before.pending
+
+      # Новая инкарнация перевзводит ход: turn_ref строго растёт (§4.3).
+      assert restored.turn_ref > before.turn_ref
+      assert restored.turn_deadline != nil
+
+      # Партия живая: текущий игрок может действовать (после добора — пас).
+      case restored.pending do
+        {:drew, player_id} -> assert :ok = Server.pass(code, player_id)
+        _ -> assert :ok = Server.draw(code, restored.current_player)
+      end
+    end
+
+    test "после восстановления таймер хода работает (авто-действие наступает)" do
+      code = lobby([player("p1"), player("p2")], turn_ms: 60)
+      :ok = Server.start_game(code)
+
+      kill_and_await_restart(code)
+      hand_before = length(Server.state(code).hands["p1"])
+
+      # Таймер новой инкарнации живёт: авто-действие (добор p1) наступает.
+      eventually(fn -> length(Server.state(code).hands["p1"]) > hand_before end)
+    end
+
+    test "после восстановления боты продолжают доигрывать" do
+      code = lobby([player("bot-1", true), player("bot-2", true)], bot_delay: 20)
+      :ok = Server.start_game(code)
+
+      kill_and_await_restart(code)
+
+      # Цепочка бот-ходов перевзводится и доводит партию до победителя.
+      eventually(fn -> Server.state(code).phase == :finished end, 400)
+    end
+
+    test "протухший turn_timeout погибшей инкарнации безвреден" do
+      code = lobby([player("p1"), player("p2")])
+      :ok = Server.start_game(code)
+      stale_ref = Server.state(code).turn_ref
+
+      kill_and_await_restart(code)
+      {:ok, pid} = Manager.find(code)
+      before = Server.state(code)
+
+      send(pid, {:turn_timeout, stale_ref})
+      send(pid, {:bot_move, stale_ref})
+
+      # Состояние не сдвинулось: ходы/руки на месте (deadline тот же).
+      assert Server.state(code) == before
+    end
+
+    test "Manager.stop чистит снапшот (штатный :shutdown)" do
+      code = lobby([player("p1"), player("p2")])
+      :ok = Server.start_game(code)
+      assert {:ok, _game} = Stash.get(code)
+
+      :ok = Manager.stop(code)
+
+      assert Stash.get(code) == :error
+    end
+
+    test "выход последнего реального (штатный :normal) чистит снапшот" do
+      code = lobby([player("p1"), player("bot", true)])
+      {:ok, pid} = Manager.find(code)
+      ref = Process.monitor(pid)
+
+      :ok = Server.remove_player(code, "p1")
+
+      assert_receive {:DOWN, ^ref, :process, ^pid, :normal}
+      assert Stash.get(code) == :error
+    end
+
+    test "падение одной партии не трогает соседнюю (изоляция)" do
+      crashing = lobby([player("p1"), player("p2")])
+      bystander = lobby([player("q1"), player("q2")])
+      :ok = Server.start_game(crashing)
+      :ok = Server.start_game(bystander)
+      {:ok, bystander_pid} = Manager.find(bystander)
+
+      kill_and_await_restart(crashing)
+
+      assert {:ok, ^bystander_pid} = Manager.find(bystander)
+      assert Server.state(bystander).phase == :playing
+    end
+  end
+
   # Ждёт, пока ход дойдёт до игрока `id` (получая broadcast'ы шагов бота).
   defp await_current(code, id) do
     receive do

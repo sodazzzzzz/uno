@@ -15,7 +15,14 @@ defmodule Uno.Application do
       UnoWeb.Presence,
       # Адресация партий по room_code и по процессу на партию.
       {Registry, keys: :unique, name: Uno.Game.Registry},
-      {DynamicSupervisor, name: Uno.Game.Supervisor, strategy: :one_for_one},
+      # Снапшоты партий (ETS) — стартует ДО супервизора партий: таблица должна
+      # существовать и переживать падения процессов партий (let-it-crash).
+      Uno.Game.Stash,
+      # Интенсивность выше дефолтной (3/5с): партии рестартуют после падений
+      # (restart: :transient + снапшот), и пачка одновременных падений не должна
+      # гасить супервизор со ВСЕМИ партиями.
+      {DynamicSupervisor,
+       name: Uno.Game.Supervisor, strategy: :one_for_one, max_restarts: 20, max_seconds: 5},
       # Start to serve requests, typically the last entry
       UnoWeb.Endpoint
     ]
