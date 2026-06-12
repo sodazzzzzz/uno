@@ -56,8 +56,10 @@ defmodule Uno.Game.Stash do
 
   @impl true
   def init(_opts) do
+    # Профиль write-heavy: снапшот на каждое действие во всех партиях (по
+    # разным ключам), чтение — только при восстановлении после падения.
     table =
-      :ets.new(@table, [:named_table, :set, :public, read_concurrency: true])
+      :ets.new(@table, [:named_table, :set, :public, write_concurrency: true])
 
     {:ok, table}
   end
