@@ -55,8 +55,27 @@ defmodule Uno.Game.ServerTest do
     end
 
     test "пас после добора передаёт ход" do
-      code = lobby([player("p1"), player("p2")])
-      :ok = Server.start_game(code)
+      # Детерминированная партия через :game (issue #65): реальная раздача
+      # могла выдать руку, где и после добора нечем ходить, — тогда срабатывает
+      # авто-пас (#52), pending == nil и тест флейкал. Здесь рука p1
+      # неиграбельна (blue 3 на red 5), а верх колоды играбелен (red 9) —
+      # после добора гарантированно есть чем ходить → метка {:drew}.
+      code = unique_code()
+      players = [player("p1"), player("p2")]
+
+      game = %State{
+        room_code: code,
+        phase: :playing,
+        players: players,
+        hands: %{"p1" => [num(:blue, 3)], "p2" => [num(:green, 8)]},
+        draw_pile: [num(:red, 9)],
+        discard_pile: [num(:red, 5)],
+        current_color: :red,
+        current_player: "p1"
+      }
+
+      {:ok, _pid} = Manager.create(code, players: players, game: game)
+      on_exit(fn -> Manager.stop(code) end)
 
       assert :ok = Server.draw(code, "p1")
       assert Server.state(code).pending == {:drew, "p1"}
