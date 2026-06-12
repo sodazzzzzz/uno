@@ -165,6 +165,8 @@ defmodule Uno.Game.Rules do
       discard_top: List.first(state.discard_pile),
       # Размер стопки сброса — публичная информация (видна за столом); клиенту
       # служит ключом пересоздания узла сброса (анимация прилёта карты).
+      # Значение НЕ уникально во времени: перетасовка сброса в колоду уменьшает
+      # счётчик — для ре-анимации достаточно различия соседних состояний.
       discard_count: length(state.discard_pile),
       current_color: state.current_color,
       whose_turn: state.current_player,
