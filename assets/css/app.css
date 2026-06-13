@@ -756,6 +756,9 @@
 }
 .uno-overlay__card {
   background: var(--uno-paper);
+  /* Оверлей — сиблинг .uno-table, без явного цвета унаследовал бы голубоватый
+     daisyUI base-content. Задаём тёплый ink из палитры Warm Table. */
+  color: var(--uno-ink);
   border-radius: 22px;
   padding: 30px 34px;
   text-align: center;
@@ -766,6 +769,20 @@
   font-weight: 700;
   font-size: 22px;
   margin: 0 0 18px;
+}
+/* Победа — момент восторга: крупный фирменный красный заголовок, имя ниже */
+.uno-overlay__card--win .uno-overlay__title {
+  font-size: 32px;
+  color: var(--uno-red);
+  margin: 0 0 4px;
+}
+.uno-overlay__winner {
+  font-family: var(--uno-body);
+  font-weight: 700;
+  font-size: 19px;
+  color: var(--uno-ink);
+  margin: 0;
+  text-wrap: balance;
 }
 .uno-overlay__emoji {
   font-size: 54px;
