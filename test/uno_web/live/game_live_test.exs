@@ -113,6 +113,38 @@ defmodule UnoWeb.GameLiveTest do
       view
     end
 
+    # Детерминированная партия в :playing для тестов «добор + Пас» (issue #69):
+    # рука «me» неиграбельна (blue 3 на red 5), верх колоды играбелен (red 9),
+    # поэтому после добора гарантированно есть чем ходить → метка {:drew} и
+    # кнопка «Пас». Без засева реальная раздача иногда оставляла руку без хода
+    # и срабатывал авто-пас (#52): pending == nil, «Пас» не рендерился, тест
+    # флейкал по seed (находка ревью #68). started/1 не трогаем — он нужен
+    # тесту motion для is-dealing от реального перехода раздачи.
+    defp started_drawable(conn) do
+      code = unique_code()
+      players = [player("me", "Алиса"), player("bot-1", "Лео", true)]
+
+      game = %State{
+        room_code: code,
+        phase: :playing,
+        players: players,
+        hands: %{
+          "me" => [%{color: :blue, type: {:number, 3}}],
+          "bot-1" => [%{color: :green, type: {:number, 8}}]
+        },
+        draw_pile: [%{color: :red, type: {:number, 9}}],
+        discard_pile: [%{color: :red, type: {:number, 5}}],
+        current_color: :red,
+        current_player: "me"
+      }
+
+      {:ok, _pid} = Manager.create(code, players: players, game: game)
+      on_exit(fn -> Manager.stop(code) end)
+
+      {:ok, view, _html} = live(conn_as(conn, "me"), ~p"/game/#{code}")
+      view
+    end
+
     test "после старта рендерится стол: рука, сброс, соперник", %{conn: conn} do
       html = render(started(conn))
 
@@ -122,7 +154,7 @@ defmodule UnoWeb.GameLiveTest do
     end
 
     test "клик по колоде добирает карту и показывает «Пас»", %{conn: conn} do
-      view = started(conn)
+      view = started_drawable(conn)
 
       html = view |> element("button.uno-deck") |> render_click()
 
@@ -130,7 +162,7 @@ defmodule UnoWeb.GameLiveTest do
     end
 
     test "пас после добора передаёт ход следующему", %{conn: conn} do
-      view = started(conn)
+      view = started_drawable(conn)
 
       view |> element("button.uno-deck") |> render_click()
       html = view |> element("button", "Пас") |> render_click()
