@@ -188,7 +188,8 @@ defmodule UnoWeb.GameLiveTest do
       conn = conn_as(conn, "me")
       {:ok, view, html} = live(conn, ~p"/game/#{code}")
 
-      assert html =~ "Алиса победил"
+      assert html =~ "Победа!"
+      assert html =~ "Алиса"
       assert html =~ "Ещё раз"
 
       html = view |> element("button", "Ещё раз") |> render_click()
@@ -196,7 +197,7 @@ defmodule UnoWeb.GameLiveTest do
       # Возврат в комнату ожидания (ready-флоу), экран победы исчез.
       assert html =~ "Код комнаты"
       assert html =~ "Готов"
-      refute html =~ "победил"
+      refute html =~ "Победа!"
     end
   end
 

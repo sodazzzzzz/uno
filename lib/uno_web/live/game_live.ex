@@ -515,7 +515,8 @@ defmodule UnoWeb.GameLive do
       </div>
       <div class="uno-overlay__card uno-overlay__card--win">
         <div class="uno-overlay__emoji">🎉</div>
-        <h2 class="uno-overlay__title">{name_of(@view, @view.winner)} победил!</h2>
+        <h2 class="uno-overlay__title">Победа!</h2>
+        <p class="uno-overlay__winner">{name_of(@view, @view.winner)}</p>
         <div class="uno-overlay__actions">
           <button phx-click="restart" class="uno-btn uno-btn--primary">Ещё раз</button>
           <.link navigate={~p"/"} class="uno-btn uno-btn--ghost">В лобби</.link>
